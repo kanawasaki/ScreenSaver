@@ -1,0 +1,17 @@
+## .NET
+bin/
+obj/
+publish/
+*.user
+*.suo
+.vs/
+*.log
+
+## OS
+Thumbs.db
+.DS_Store
+desktop.ini
+
+## Temp
+*.tmp
+*.bak

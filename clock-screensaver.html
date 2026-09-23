@@ -1,0 +1,767 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Clock screensaver</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;500&family=Space+Grotesk:wght@300;500&family=Fraunces:opsz,wght@9..144,300;9..144,500&family=Major+Mono+Display&family=Syne:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    box-sizing: border-box;
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+    --screen: #000000;
+    --panel: #161616;
+    --panel-line: #2c2c2c;
+    --text: #e8e8e8;
+    --muted: #8a8a8a;
+    --focus: #7fb2ff;
+    --clock: #d9d9d9;
+    --clock-size: 48px;
+    --clock-font: "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
+    --clock-weight: 300;
+    --clock-opacity: 0.8;
+    --margin: 40px;
+    --pic-opacity: 0.5;
+  }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --screen: #000000; } }
+  :root[data-theme="dark"] { --screen: #000000; }
+
+  *, *::before, *::after { box-sizing: inherit; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--screen);
+    color: var(--text);
+    font-family: "Space Grotesk", system-ui, -apple-system, "Segoe UI", sans-serif;
+    overflow: hidden;
+  }
+  body.idle { cursor: none; }
+
+  /* Picture */
+  #pic {
+    position: fixed; inset: 0;
+    width: 100%; height: 100%;
+    object-fit: cover;
+    opacity: var(--pic-opacity);
+    filter: var(--pic-filter, none);
+    transition: opacity 0.6s ease, filter 2s ease;
+    pointer-events: none;
+  }
+  #fx {
+    position: fixed; inset: 0;
+    width: 100%; height: 100%;
+    pointer-events: none;
+  }
+  #pic[data-fit="contain"] { object-fit: contain; }
+  #pic[hidden] { display: none; }
+
+  /* Clock */
+  #clock {
+    position: fixed;
+    color: var(--clock);
+    font-family: var(--clock-font);
+    font-weight: var(--clock-weight);
+    font-size: var(--clock-size);
+    opacity: var(--clock-opacity);
+    font-variant-numeric: tabular-nums;
+    line-height: 1;
+    white-space: nowrap;
+    user-select: none;
+    transition: opacity 1.2s ease;
+  }
+  body.has-pic #clock { text-shadow: 0 1px 12px rgba(0,0,0,0.7), 0 0 2px rgba(0,0,0,0.6); }
+  #clock .ampm { font-size: 0.4em; margin-left: 0.25em; }
+  #clock .sub {
+    display: flex;
+    align-items: center;
+    gap: 0.6em;
+    font-size: 0.32em;
+    margin-top: 0.5em;
+    opacity: 0.75;
+    letter-spacing: 0.02em;
+  }
+  #clock .wx { display: inline-flex; align-items: center; gap: 0.35em; }
+  #clock .wx svg { width: 1.25em; height: 1.25em; flex: none; }
+  #clock.fading { opacity: 0; }
+
+  #clock[data-pos="top-left"]     { top: calc(var(--margin) + env(safe-area-inset-top, 0px)); left: var(--margin); }
+  #clock[data-pos="top-right"]    { top: calc(var(--margin) + env(safe-area-inset-top, 0px)); right: var(--margin); text-align: right; }
+  #clock[data-pos="bottom-left"]  { bottom: calc(var(--margin) + env(safe-area-inset-bottom, 0px)); left: var(--margin); }
+  #clock[data-pos="bottom-right"] { bottom: calc(var(--margin) + env(safe-area-inset-bottom, 0px)); right: var(--margin); text-align: right; }
+  #clock[data-pos="center"]       { top: 50%; left: 50%; transform: translate(-50%, -50%); text-align: center; }
+  #clock[data-pos="top-right"] .sub, #clock[data-pos="bottom-right"] .sub { justify-content: flex-end; }
+  #clock[data-pos="center"] .sub { justify-content: center; }
+
+  /* Controls */
+  .controls {
+    position: fixed;
+    top: calc(16px + env(safe-area-inset-top, 0px));
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    gap: 8px;
+    transition: opacity 0.4s ease;
+    z-index: 2;
+  }
+  body.idle .controls { opacity: 0; pointer-events: none; }
+  .controls button, .panel button {
+    font: inherit;
+    font-size: 14px;
+    color: var(--text);
+    background: var(--panel);
+    border: 1px solid var(--panel-line);
+    border-radius: 6px;
+    padding: 8px 14px;
+    cursor: pointer;
+  }
+  .controls button:hover, .panel button:hover { border-color: #555; }
+  .panel button:disabled { opacity: 0.4; cursor: default; }
+  :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+  .panel {
+    position: fixed;
+    top: calc(64px + env(safe-area-inset-top, 0px));
+    left: 50%;
+    transform: translateX(-50%);
+    width: min(380px, calc(100% - 32px));
+    max-height: calc(100% - 96px);
+    overflow-y: auto;
+    background: var(--panel);
+    border: 1px solid var(--panel-line);
+    border-radius: 10px;
+    padding: 20px;
+    font-size: 14px;
+    z-index: 3;
+  }
+  .panel[hidden] { display: none; }
+  .panel h2 { margin: 0 0 16px; font-size: 16px; font-weight: 500; }
+  .panel h3 {
+    margin: 24px 0 12px;
+    padding-top: 16px;
+    border-top: 1px solid var(--panel-line);
+    font-size: 15px;
+    font-weight: 500;
+  }
+  .row { margin-bottom: 16px; }
+  .row > label, .row > .label { display: block; color: var(--muted); margin-bottom: 6px; }
+  select, input[type="range"] { width: 100%; }
+  select {
+    font: inherit;
+    color: var(--text);
+    background: #0c0c0c;
+    border: 1px solid var(--panel-line);
+    border-radius: 6px;
+    padding: 7px 8px;
+  }
+  input[type="range"] { accent-color: #bdbdbd; }
+  .value { float: right; color: var(--text); font-variant-numeric: tabular-nums; }
+  .pair { display: flex; gap: 8px; }
+  .pair > * { flex: 1; }
+
+  .corners {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    grid-template-rows: repeat(3, 28px);
+    gap: 4px;
+    width: 132px;
+    padding: 6px;
+    border: 1px solid var(--panel-line);
+    border-radius: 6px;
+    background: #000;
+  }
+  .corners button { padding: 0; border-radius: 4px; background: #1d1d1d; }
+  .corners button[aria-pressed="true"] { background: #d9d9d9; border-color: #d9d9d9; }
+  .corners .gap { visibility: hidden; }
+
+  .checks label { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; color: var(--text); cursor: pointer; }
+  .note { color: var(--muted); font-size: 12px; margin: 4px 0 12px; line-height: 1.5; }
+  .pic-row { display: flex; align-items: center; gap: 10px; }
+  .thumb {
+    width: 56px; height: 40px; flex: none;
+    border: 1px solid var(--panel-line); border-radius: 4px;
+    background: #0c0c0c center / cover no-repeat;
+  }
+  .pic-name { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+  .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  .panel-foot { display: flex; justify-content: space-between; gap: 8px; margin-top: 8px; }
+  .hint { color: var(--muted); font-size: 12px; margin: 12px 0 0; }
+  .error { color: #ff9b8f; font-size: 12px; margin: 6px 0 0; }
+
+  @media (prefers-reduced-motion: reduce) {
+    #clock, .controls, #pic { transition: none; }
+    #fx { display: block; }
+  }
+</style>
+</head>
+<body>
+  <img id="pic" alt="" hidden>
+  <canvas id="fx" aria-hidden="true"></canvas>
+  <div id="clock" data-pos="bottom-right" aria-live="off"></div>
+
+  <div class="controls">
+    <button id="optionsBtn" aria-expanded="false" aria-controls="panel">Options</button>
+    <button id="fullBtn">Full screen</button>
+  </div>
+
+  <section class="panel" id="panel" hidden aria-label="Clock options">
+    <h2>Clock options</h2>
+
+    <div class="row">
+      <span class="label">Position</span>
+      <div class="corners" role="group" aria-label="Position">
+        <button data-pos="top-left" aria-label="Top left"></button>
+        <span class="gap"></span>
+        <button data-pos="top-right" aria-label="Top right"></button>
+        <span class="gap"></span>
+        <button data-pos="center" aria-label="Center"></button>
+        <span class="gap"></span>
+        <button data-pos="bottom-left" aria-label="Bottom left"></button>
+        <span class="gap"></span>
+        <button data-pos="bottom-right" aria-label="Bottom right"></button>
+      </div>
+    </div>
+
+    <div class="row pair">
+      <div>
+        <label for="font" style="display:block;color:var(--muted);margin-bottom:6px">Font</label>
+        <select id="font">
+          <option value="plex">Plex Mono</option>
+          <option value="grotesk">Space Grotesk</option>
+          <option value="fraunces">Fraunces (serif)</option>
+          <option value="major">Major Mono Display</option>
+          <option value="syne">Syne</option>
+          <option value="system">System font</option>
+        </select>
+      </div>
+      <div>
+        <label for="weight" style="display:block;color:var(--muted);margin-bottom:6px">Weight</label>
+        <select id="weight">
+          <option value="light">Light</option>
+          <option value="bold">Bold</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="row">
+      <label for="size">Size <span class="value" id="sizeVal"></span></label>
+      <input type="range" id="size" min="16" max="240" step="2">
+    </div>
+    <div class="row">
+      <label for="bright">Brightness <span class="value" id="brightVal"></span></label>
+      <input type="range" id="bright" min="10" max="100" step="5">
+    </div>
+    <div class="row">
+      <label for="margin">Distance from edge <span class="value" id="marginVal"></span></label>
+      <input type="range" id="margin" min="8" max="200" step="4">
+    </div>
+
+    <div class="row checks">
+      <label><input type="checkbox" id="h24"> 24-hour time</label>
+      <label><input type="checkbox" id="secs"> Show seconds</label>
+      <label><input type="checkbox" id="date"> Show date</label>
+      <label><input type="checkbox" id="rotate"> Move to the next corner every 10 minutes</label>
+    </div>
+
+    <h3>Weather</h3>
+    <div class="row checks">
+      <label><input type="checkbox" id="weather"> Show weather</label>
+    </div>
+    <p class="note">Sample weather in this prototype. The installed version would show real conditions for your location.</p>
+    <div class="row pair">
+      <div>
+        <label for="cond" style="display:block;color:var(--muted);margin-bottom:6px">Preview</label>
+        <select id="cond">
+          <option value="clear">Clear</option>
+          <option value="partly">Partly cloudy</option>
+          <option value="cloudy">Cloudy</option>
+          <option value="rain">Rain</option>
+          <option value="snow">Snow</option>
+          <option value="storm">Thunderstorm</option>
+        </select>
+      </div>
+      <div>
+        <label for="unit" style="display:block;color:var(--muted);margin-bottom:6px">Units</label>
+        <select id="unit">
+          <option value="C">°C</option>
+          <option value="F">°F</option>
+        </select>
+      </div>
+    </div>
+    <div class="row checks">
+      <label><input type="checkbox" id="wxText"> Show condition name</label>
+    </div>
+
+    <h3>Picture</h3>
+    <div class="row">
+      <div class="pic-row">
+        <div class="thumb" id="thumb" aria-hidden="true"></div>
+        <span class="pic-name" id="picName">No picture</span>
+        <label for="picInput" class="sr-only">Choose picture</label>
+        <input type="file" id="picInput" accept="image/*" class="sr-only">
+        <button id="chooseBtn">Choose</button>
+        <button id="removeBtn">Remove</button>
+      </div>
+      <p class="error" id="picError" hidden></p>
+    </div>
+    <div class="row">
+      <label for="fit">Fit</label>
+      <select id="fit">
+        <option value="cover">Fill the screen</option>
+        <option value="contain">Show the whole picture</option>
+      </select>
+    </div>
+    <div class="row">
+      <label for="picBright">Picture brightness <span class="value" id="picBrightVal"></span></label>
+      <input type="range" id="picBright" min="5" max="100" step="5">
+    </div>
+
+    <h3>Effects</h3>
+    <div class="row checks">
+      <label><input type="checkbox" id="fxOn"> Weather and night effects</label>
+    </div>
+    <div class="row">
+      <label for="tod">Time of day</label>
+      <select id="tod">
+        <option value="auto">Automatic</option>
+        <option value="day">Always day</option>
+        <option value="night">Always night</option>
+      </select>
+    </div>
+    <p class="note">Automatic treats 8 pm to 6 am as night. The installed version would use real sunset and sunrise.</p>
+    <div class="row">
+      <label for="fxStrength">Effect strength <span class="value" id="fxStrengthVal"></span></label>
+      <input type="range" id="fxStrength" min="10" max="100" step="5">
+    </div>
+
+    <div class="panel-foot">
+      <button id="resetBtn">Reset to defaults</button>
+      <button id="closeBtn">Close</button>
+    </div>
+    <p class="hint">Press O to open or close options, F for full screen. Settings and picture are saved in this browser.</p>
+  </section>
+
+<script>
+(function () {
+  const FONTS = {
+    plex:     '"IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace',
+    grotesk:  '"Space Grotesk", system-ui, sans-serif',
+    fraunces: '"Fraunces", Georgia, "Times New Roman", serif',
+    major:    '"Major Mono Display", ui-monospace, monospace',
+    syne:     '"Syne", system-ui, sans-serif',
+    system:   'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif'
+  };
+  const WEIGHTS = { light: { default: 300, syne: 400, major: 400 }, bold: { default: 500, syne: 700, major: 400 } };
+  const CORNERS = ["top-left", "top-right", "bottom-right", "bottom-left"];
+
+  // Sample weather: temperature in °C
+  const SW = 'fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"';
+  const CLOUD = '<path d="M7 18h10a4 4 0 0 0 .6-7.95A5.5 5.5 0 0 0 7.1 11 3.5 3.5 0 0 0 7 18z"/>';
+  const WX = {
+    clear:  { name: "Clear", t: 22, svg: `<svg viewBox="0 0 24 24" ${SW}><circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.3 5.3l1.4 1.4M17.3 17.3l1.4 1.4M5.3 18.7l1.4-1.4M17.3 6.7l1.4-1.4"/></svg>` },
+    partly: { name: "Partly cloudy", t: 18, svg: `<svg viewBox="0 0 24 24" ${SW}><path d="M9 3.5v1.3M3.5 9h1.3M5.1 5.1l.9.9M13 5.1l-.9.9"/><path d="M5.6 11.3A3.5 3.5 0 1 1 11.8 7.7"/><path d="M9 20h8.5a3.5 3.5 0 0 0 .5-6.96A4.8 4.8 0 0 0 9 13.6 3.2 3.2 0 0 0 9 20z"/></svg>` },
+    cloudy: { name: "Cloudy", t: 15, svg: `<svg viewBox="0 0 24 24" ${SW}>${CLOUD}</svg>` },
+    rain:   { name: "Rain", t: 12, svg: `<svg viewBox="0 0 24 24" ${SW}><path d="M7 15h10a4 4 0 0 0 .6-7.95A5.5 5.5 0 0 0 7.1 8 3.5 3.5 0 0 0 7 15z"/><path d="M8 18l-1 2.5M12 18l-1 2.5M16 18l-1 2.5"/></svg>` },
+    snow:   { name: "Snow", t: -2, svg: `<svg viewBox="0 0 24 24" ${SW}><path d="M7 15h10a4 4 0 0 0 .6-7.95A5.5 5.5 0 0 0 7.1 8 3.5 3.5 0 0 0 7 15z"/><path d="M8 19h.01M12 20h.01M16 19h.01M10 22h.01M14 22h.01" stroke-width="2.4"/></svg>` },
+    storm:  { name: "Thunderstorm", t: 17, svg: `<svg viewBox="0 0 24 24" ${SW}><path d="M7 15h10a4 4 0 0 0 .6-7.95A5.5 5.5 0 0 0 7.1 8 3.5 3.5 0 0 0 7 15z"/><path d="M12.5 15l-2 3.5h3l-2 3.5"/></svg>` }
+  };
+
+  const DEFAULTS = { pos: "bottom-right", font: "plex", weight: "light", size: 48, bright: 80, margin: 40,
+                     h24: true, secs: false, date: false, rotate: false,
+                     weather: true, cond: "partly", unit: "C", wxText: false,
+                     fit: "cover", picBright: 50,
+                     fxOn: true, tod: "auto", fxStrength: 70 };
+  const KEY = "clock-screensaver-settings";
+
+  let s = Object.assign({}, DEFAULTS);
+  try {
+    const saved = JSON.parse(localStorage.getItem(KEY) || "null");
+    if (saved && typeof saved === "object") s = Object.assign(s, saved);
+  } catch (e) {}
+
+  const $ = (id) => document.getElementById(id);
+  const clock = $("clock"), root = document.documentElement, pic = $("pic");
+
+  function save() { try { localStorage.setItem(KEY, JSON.stringify(s)); } catch (e) {} }
+
+  function apply() {
+    clock.dataset.pos = s.pos;
+    root.style.setProperty("--clock-font", FONTS[s.font] || FONTS.plex);
+    const w = WEIGHTS[s.weight] || WEIGHTS.light;
+    root.style.setProperty("--clock-weight", w[s.font] || w.default);
+    root.style.setProperty("--clock-size", s.size + "px");
+    root.style.setProperty("--clock-opacity", (s.bright / 100) * (s.fxOn && isNight() ? 0.75 : 1));
+    root.style.setProperty("--margin", s.margin + "px");
+    root.style.setProperty("--pic-opacity", s.picBright / 100);
+    pic.dataset.fit = s.fit;
+    document.querySelectorAll(".corners button").forEach(b =>
+      b.setAttribute("aria-pressed", String(b.dataset.pos === s.pos)));
+    ["font", "weight", "cond", "unit", "fit", "tod"].forEach(k => $(k).value = s[k]);
+    $("fxStrength").value = s.fxStrength; $("fxStrengthVal").textContent = s.fxStrength + "%";
+    ["tod", "fxStrength"].forEach(k => $(k).disabled = !s.fxOn);
+    $("size").value = s.size; $("sizeVal").textContent = s.size + " px";
+    $("bright").value = s.bright; $("brightVal").textContent = s.bright + "%";
+    $("margin").value = s.margin; $("marginVal").textContent = s.margin + " px";
+    $("picBright").value = s.picBright; $("picBrightVal").textContent = s.picBright + "%";
+    ["h24", "secs", "date", "rotate", "weather", "wxText", "fxOn"].forEach(k => $(k).checked = !!s[k]);
+    ["cond", "unit", "wxText"].forEach(k => $(k).disabled = !s.weather);
+    updateScene(true);
+    tick();
+  }
+
+  const pad = (n) => String(n).padStart(2, "0");
+  function tick() {
+    const d = new Date();
+    let h = d.getHours(), ampm = "";
+    if (!s.h24) { ampm = h < 12 ? "AM" : "PM"; h = h % 12 || 12; }
+    const t = (s.h24 ? pad(h) : h) + ":" + pad(d.getMinutes()) + (s.secs ? ":" + pad(d.getSeconds()) : "");
+    let html = t + (ampm ? '<span class="ampm">' + ampm + "</span>" : "");
+    const parts = [];
+    if (s.date) {
+      parts.push("<span>" + d.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" }) + "</span>");
+    }
+    if (s.weather) {
+      const w = WX[s.cond] || WX.partly;
+      const temp = s.unit === "F" ? Math.round(w.t * 9 / 5 + 32) : w.t;
+      parts.push('<span class="wx" aria-label="' + w.name + ", " + temp + ' degrees">' + w.svg +
+        "<span>" + temp + "°" + (s.wxText ? " " + w.name : "") + "</span></span>");
+    }
+    if (parts.length) html += '<span class="sub">' + parts.join("") + "</span>";
+    if (clock.innerHTML !== html) clock.innerHTML = html;
+  }
+  function loop() { updateScene(false); tick(); setTimeout(loop, 1000 - (Date.now() % 1000) + 5); }
+
+  setInterval(() => {
+    if (!s.rotate) return;
+    const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const next = () => {
+      s.pos = CORNERS[(CORNERS.indexOf(s.pos) + 1) % CORNERS.length];
+      save(); apply();
+      clock.classList.remove("fading");
+    };
+    if (reduce) return next();
+    clock.classList.add("fading");
+    setTimeout(next, 1200);
+  }, 10 * 60 * 1000);
+
+
+  // ---------- Weather and night effects ----------
+  const fx = $("fx"), ctx = fx.getContext("2d");
+  const reduceMQ = matchMedia("(prefers-reduced-motion: reduce)");
+  let W = 0, H = 0, sceneKey = "", scene = null, raf = 0, lastT = 0, flash = 0, nextFlash = 0, nightState = null;
+
+  function isNight() {
+    if (s.tod === "day") return false;
+    if (s.tod === "night") return true;
+    const h = new Date().getHours();
+    return h >= 20 || h < 6;
+  }
+  const rnd = (a, b) => a + Math.random() * (b - a);
+
+  function resize() {
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    W = window.innerWidth; H = window.innerHeight;
+    fx.width = Math.round(W * dpr); fx.height = Math.round(H * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    if (sceneKey) updateScene(true);
+  }
+  window.addEventListener("resize", resize);
+
+  function picFilter(cond, night) {
+    const f = [];
+    if (cond === "clear") f.push("saturate(1.12)", "brightness(1.05)");
+    else if (cond === "partly") f.push("saturate(1.04)");
+    else if (cond === "cloudy") f.push("saturate(0.7)", "brightness(0.92)");
+    else if (cond === "rain") f.push("saturate(0.7)", "brightness(0.85)", "contrast(0.95)");
+    else if (cond === "storm") f.push("saturate(0.6)", "brightness(0.75)", "contrast(1.05)");
+    else if (cond === "snow") f.push("saturate(0.75)", "brightness(1.02)");
+    if (night) f.push("brightness(0.5)", "saturate(0.7)", "hue-rotate(-10deg)");
+    return f.length ? f.join(" ") : "none";
+  }
+
+  function updateScene(force) {
+    const night = isNight();
+    if (nightState !== null && night !== nightState && !force) { nightState = night; apply(); return; }
+    nightState = night;
+    const on = s.fxOn;
+    const cond = s.weather ? s.cond : null;
+    root.style.setProperty("--pic-filter", on ? picFilter(cond, night) : "none");
+    const key = on ? [cond, night, s.fxStrength, s.pos, W, H].join("|") : "off";
+    if (!force && key === sceneKey) return;
+    sceneKey = key;
+    buildScene(on ? cond : null, night);
+  }
+
+  function buildScene(cond, night) {
+    cancelAnimationFrame(raf);
+    ctx.clearRect(0, 0, W, H);
+    scene = null;
+    if (!W) return;
+    const k = s.fxStrength / 100;
+    const area = (W * H) / (1280 * 800);
+    const sc = { cond, night, k, streaks: [], drops: [], flakes: [], stars: [], rays: null };
+
+    if (cond === "rain" || cond === "storm") {
+      const n = Math.round((cond === "storm" ? 220 : 140) * k * area);
+      for (let i = 0; i < n; i++) sc.streaks.push(newStreak(true));
+      sc.maxDrops = Math.round((cond === "storm" ? 55 : 40) * k * Math.sqrt(area));
+      for (let i = 0; i < sc.maxDrops * 0.6; i++) sc.drops.push(newDrop(true));
+    }
+    if (cond === "snow") {
+      const n = Math.round(130 * k * area);
+      for (let i = 0; i < n; i++) sc.flakes.push(newFlake(true));
+    }
+    if ((cond === "clear" || cond === "partly") && night) {
+      const n = Math.round((cond === "clear" ? 110 : 45) * k * area);
+      for (let i = 0; i < n; i++) sc.stars.push({ x: rnd(0, W), y: rnd(0, H * 0.75), r: rnd(0.4, 1.3),
+        a: rnd(0.25, 0.8), sp: rnd(0.3, 1.4), ph: rnd(0, 6.28) });
+    }
+    if ((cond === "clear" || cond === "partly") && !night) {
+      // Light comes from the top corner away from the clock
+      const fromLeft = !(s.pos === "top-left");
+      const n = cond === "clear" ? 7 : 4;
+      const list = [];
+      for (let i = 0; i < n; i++) list.push({ a: rnd(12, 75), w: rnd(2.5, 6), al: rnd(0.5, 1), sp: rnd(0.05, 0.15), ph: rnd(0, 6.28) });
+      sc.rays = { x: fromLeft ? -W * 0.05 : W * 1.05, y: -H * 0.08, dir: fromLeft ? 1 : -1, list,
+        power: cond === "clear" ? 1 : 0.55 };
+    }
+    if (cond === "storm") nextFlash = performance.now() / 1000 + rnd(6, 14);
+    scene = sc;
+
+    const hasMotion = sc.streaks.length || sc.drops.length || sc.flakes.length || sc.stars.length || sc.rays;
+    if (!hasMotion) return;
+    if (reduceMQ.matches) { draw(performance.now() / 1000, 0); return; }
+    lastT = performance.now();
+    raf = requestAnimationFrame(frame);
+  }
+
+  function newStreak(anywhere) {
+    return { x: rnd(-W * 0.1, W * 1.05), y: anywhere ? rnd(-H, H) : rnd(-H * 0.3, -20),
+      len: rnd(12, 26), v: rnd(750, 1150), a: rnd(0.12, 0.32) };
+  }
+  function newDrop(anywhere) {
+    const r = rnd(1.8, 6.5);
+    return { x: rnd(0, W), y: rnd(0, H), r, age: anywhere ? rnd(0, 6) : 0, life: rnd(5, 14),
+      slide: r > 4.8 && Math.random() < 0.5 ? rnd(15, 55) : 0, wait: rnd(0.5, 4) };
+  }
+  function newFlake(anywhere) {
+    return { x: rnd(0, W), y: anywhere ? rnd(0, H) : rnd(-40, -5), r: rnd(1, 3.4),
+      v: rnd(25, 70), ph: rnd(0, 6.28), sw: rnd(0.4, 1.2), a: rnd(0.45, 0.9) };
+  }
+
+  function frame(now) {
+    const dt = Math.min((now - lastT) / 1000, 0.05);
+    lastT = now;
+    draw(now / 1000, dt);
+    raf = requestAnimationFrame(frame);
+  }
+
+  function draw(t, dt) {
+    const sc = scene; if (!sc) return;
+    const k = sc.k;
+    ctx.clearRect(0, 0, W, H);
+
+    // Sun rays
+    if (sc.rays) {
+      const R = sc.rays, len = Math.hypot(W, H) * 1.15;
+      ctx.save();
+      ctx.globalCompositeOperation = "screen";
+      const glow = ctx.createRadialGradient(R.x, R.y, 0, R.x, R.y, Math.max(W, H) * 0.55);
+      glow.addColorStop(0, `rgba(255, 224, 170, ${0.32 * k * R.power})`);
+      glow.addColorStop(1, "rgba(255, 224, 170, 0)");
+      ctx.fillStyle = glow;
+      ctx.fillRect(0, 0, W, H);
+      for (const ray of R.list) {
+        const ang = (ray.a + Math.sin(t * ray.sp + ray.ph) * 2.2) * Math.PI / 180;
+        const half = ray.w * Math.PI / 360;
+        const pulse = 0.75 + 0.25 * Math.sin(t * ray.sp * 2 + ray.ph);
+        const a1 = ang - half, a2 = ang + half;
+        const g = ctx.createLinearGradient(R.x, R.y, R.x + R.dir * Math.cos(ang) * len, R.y + Math.sin(ang) * len);
+        g.addColorStop(0, `rgba(255, 236, 190, ${0.2 * k * ray.al * pulse * R.power})`);
+        g.addColorStop(0.6, `rgba(255, 236, 190, ${0.05 * k * ray.al * pulse * R.power})`);
+        g.addColorStop(1, "rgba(255, 236, 190, 0)");
+        ctx.fillStyle = g;
+        ctx.beginPath();
+        ctx.moveTo(R.x, R.y);
+        ctx.lineTo(R.x + R.dir * Math.cos(a1) * len, R.y + Math.sin(a1) * len);
+        ctx.lineTo(R.x + R.dir * Math.cos(a2) * len, R.y + Math.sin(a2) * len);
+        ctx.closePath();
+        ctx.fill();
+      }
+      ctx.restore();
+    }
+
+    // Stars
+    for (const st of sc.stars) {
+      const a = st.a * k * (0.55 + 0.45 * Math.sin(t * st.sp + st.ph));
+      ctx.fillStyle = `rgba(230, 236, 255, ${a})`;
+      ctx.beginPath(); ctx.arc(st.x, st.y, st.r, 0, 6.283); ctx.fill();
+    }
+
+    // Falling rain
+    if (sc.streaks.length) {
+      ctx.lineWidth = 1;
+      ctx.lineCap = "round";
+      for (const d of sc.streaks) {
+        d.y += d.v * dt; d.x += d.v * 0.1 * dt;
+        if (d.y > H + 30) Object.assign(d, newStreak(false));
+        ctx.strokeStyle = `rgba(205, 218, 235, ${d.a * (0.4 + 0.6 * k)})`;
+        ctx.beginPath();
+        ctx.moveTo(d.x, d.y);
+        ctx.lineTo(d.x - d.len * 0.1, d.y - d.len);
+        ctx.stroke();
+      }
+    }
+
+    // Drops on the glass
+    if (sc.drops.length || sc.maxDrops) {
+      if (dt && sc.drops.length < sc.maxDrops && Math.random() < dt * 6) sc.drops.push(newDrop(false));
+      for (let i = sc.drops.length - 1; i >= 0; i--) {
+        const d = sc.drops[i];
+        d.age += dt;
+        if (d.slide && d.age > d.wait) d.y += d.slide * dt * (1 + Math.sin(d.age * 3) * 0.4);
+        const fadeIn = Math.min(d.age / 0.4, 1), fadeOut = Math.min((d.life - d.age) / 1.5, 1);
+        const a = Math.max(0, Math.min(fadeIn, fadeOut));
+        if (d.age > d.life || d.y > H + 10) { sc.drops.splice(i, 1); continue; }
+        const r = d.r;
+        const body = ctx.createRadialGradient(d.x - r * 0.3, d.y - r * 0.35, r * 0.1, d.x, d.y, r);
+        body.addColorStop(0, `rgba(255, 255, 255, ${0.22 * a})`);
+        body.addColorStop(0.7, `rgba(180, 195, 215, ${0.08 * a})`);
+        body.addColorStop(1, `rgba(0, 0, 0, ${0.25 * a})`);
+        ctx.fillStyle = body;
+        ctx.beginPath(); ctx.ellipse(d.x, d.y, r, r * 1.12, 0, 0, 6.283); ctx.fill();
+        ctx.strokeStyle = `rgba(255, 255, 255, ${0.35 * a})`;
+        ctx.lineWidth = 0.8;
+        ctx.beginPath(); ctx.ellipse(d.x, d.y, r * 0.85, r * 0.95, 0, 0.2, 1.6); ctx.stroke();
+      }
+    }
+
+    // Snow
+    for (const f of sc.flakes) {
+      f.y += f.v * dt;
+      f.x += Math.sin(t * f.sw + f.ph) * 18 * dt;
+      if (f.y > H + 10) Object.assign(f, newFlake(false));
+      ctx.fillStyle = `rgba(255, 255, 255, ${f.a * (0.4 + 0.6 * k)})`;
+      ctx.beginPath(); ctx.arc(f.x, f.y, f.r, 0, 6.283); ctx.fill();
+    }
+
+    // Soft, infrequent lightning glow (skipped when reduced motion is on)
+    if (sc.cond === "storm" && dt) {
+      if (t > nextFlash) { flash = 1; nextFlash = t + rnd(12, 28); }
+      if (flash > 0) {
+        ctx.fillStyle = `rgba(215, 225, 255, ${0.14 * k * flash})`;
+        ctx.fillRect(0, 0, W, H);
+        flash = Math.max(0, flash - dt * 1.6);
+      }
+    }
+  }
+  reduceMQ.addEventListener?.("change", () => updateScene(true));
+  resize();
+
+  // ---------- Picture, kept in IndexedDB ----------
+  let picUrl = null;
+  function idb() {
+    return new Promise((res, rej) => {
+      try {
+        const r = indexedDB.open("clock-screensaver", 1);
+        r.onupgradeneeded = () => r.result.createObjectStore("pic");
+        r.onsuccess = () => res(r.result);
+        r.onerror = () => rej(r.error);
+      } catch (e) { rej(e); }
+    });
+  }
+  async function idbDo(mode, fn) {
+    const db = await idb();
+    return new Promise((res, rej) => {
+      const tx = db.transaction("pic", mode);
+      const req = fn(tx.objectStore("pic"));
+      tx.oncomplete = () => res(req && req.result);
+      tx.onerror = () => rej(tx.error);
+    });
+  }
+  function showPic(blob, name) {
+    if (picUrl) URL.revokeObjectURL(picUrl);
+    picUrl = blob ? URL.createObjectURL(blob) : null;
+    if (picUrl) { pic.src = picUrl; pic.hidden = false; } else { pic.removeAttribute("src"); pic.hidden = true; }
+    document.body.classList.toggle("has-pic", !!picUrl);
+    $("thumb").style.backgroundImage = picUrl ? "url(" + picUrl + ")" : "";
+    $("picName").textContent = blob ? (name || "Picture") : "No picture";
+    $("removeBtn").disabled = !blob;
+    ["fit", "picBright"].forEach(k => $(k).disabled = !blob);
+  }
+  function picError(msg) { const el = $("picError"); el.textContent = msg || ""; el.hidden = !msg; }
+
+  $("chooseBtn").addEventListener("click", () => $("picInput").click());
+  $("picInput").addEventListener("change", async (e) => {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = "";
+    if (!file) return;
+    if (!file.type.startsWith("image/")) return picError("That file isn't an image. Choose a JPG, PNG, WebP or GIF.");
+    picError("");
+    showPic(file, file.name);
+    try { await idbDo("readwrite", st => st.put({ blob: file, name: file.name }, "current")); }
+    catch (err) { picError("The picture is showing, but this browser couldn't save it. It will be gone after a reload."); }
+  });
+  $("removeBtn").addEventListener("click", async () => {
+    showPic(null); picError("");
+    try { await idbDo("readwrite", st => st.delete("current")); } catch (e) {}
+  });
+  showPic(null);
+  idbDo("readonly", st => st.get("current"))
+    .then(v => { if (v && v.blob) showPic(v.blob, v.name); })
+    .catch(() => {});
+
+  // ---------- Inputs ----------
+  document.querySelectorAll(".corners button").forEach(b =>
+    b.addEventListener("click", () => { s.pos = b.dataset.pos; save(); apply(); }));
+  ["font", "weight", "cond", "unit", "fit", "tod"].forEach(k =>
+    $(k).addEventListener("change", e => { s[k] = e.target.value; save(); apply(); }));
+  ["size", "bright", "margin", "picBright", "fxStrength"].forEach(k =>
+    $(k).addEventListener("input", e => { s[k] = Number(e.target.value); save(); apply(); }));
+  ["h24", "secs", "date", "rotate", "weather", "wxText", "fxOn"].forEach(k =>
+    $(k).addEventListener("change", e => { s[k] = e.target.checked; save(); apply(); }));
+  $("resetBtn").addEventListener("click", () => { s = Object.assign({}, DEFAULTS); save(); apply(); });
+
+  // ---------- Panel ----------
+  const panel = $("panel"), optBtn = $("optionsBtn");
+  function togglePanel(open) {
+    const willOpen = open ?? panel.hidden;
+    panel.hidden = !willOpen;
+    optBtn.setAttribute("aria-expanded", String(willOpen));
+    if (willOpen) wake();
+  }
+  optBtn.addEventListener("click", () => togglePanel());
+  $("closeBtn").addEventListener("click", () => togglePanel(false));
+
+  function toggleFull() {
+    try {
+      if (!document.fullscreenElement) document.documentElement.requestFullscreen?.();
+      else document.exitFullscreen?.();
+    } catch (e) {}
+  }
+  $("fullBtn").addEventListener("click", toggleFull);
+  document.addEventListener("fullscreenchange", () =>
+    $("fullBtn").textContent = document.fullscreenElement ? "Exit full screen" : "Full screen");
+
+  document.addEventListener("keydown", e => {
+    if (e.target.tagName === "SELECT" || (e.target.tagName === "INPUT" && e.target.type !== "checkbox")) return;
+    if (e.key === "o" || e.key === "O") togglePanel();
+    else if (e.key === "f" || e.key === "F") toggleFull();
+    else if (e.key === "Escape" && !panel.hidden) togglePanel(false);
+  });
+
+  let idleTimer;
+  function wake() {
+    document.body.classList.remove("idle");
+    clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => { if (panel.hidden) document.body.classList.add("idle"); }, 2500);
+  }
+  ["mousemove", "mousedown", "touchstart", "keydown"].forEach(ev =>
+    document.addEventListener(ev, wake, { passive: true }));
+
+  apply(); loop(); wake();
+})();
+</script>
+</body>
+</html>

@@ -11,11 +11,13 @@ public class ScreensaverForm : Form
     private readonly WeatherService? _weather;
     private readonly bool _isPrimary;
     private readonly bool _isPreview;
+    private IntPtr _previewParentHwnd; // set before CreateHandle
 
     private readonly EffectsRenderer _fx = new();
     private System.Windows.Forms.Timer _clockTimer = new();
     private System.Windows.Forms.Timer _fxTimer = new();
     private System.Windows.Forms.Timer _rotateTimer = new();
+    private System.Windows.Forms.Timer _parentMonitor = new();
 
     private Point _mouseOrigin;
     private bool _started = false;
@@ -33,8 +35,28 @@ public class ScreensaverForm : Form
     private Bitmap? _buffer;
     private int _bufW, _bufH;
 
+    // CreateParams is called when the window handle is first created.
+    // For preview mode we need WS_CHILD so GDI paints within the parent pane.
+    protected override CreateParams CreateParams
+    {
+        get
+        {
+            var cp = base.CreateParams;
+            if (_isPreview && _previewParentHwnd != IntPtr.Zero)
+            {
+                cp.Style    = 0x56000000; // WS_VISIBLE | WS_CHILD | WS_CLIPSIBLINGS | WS_CLIPCHILDREN
+                cp.ExStyle  = 0;
+                cp.Parent   = _previewParentHwnd;
+                cp.X        = 0;
+                cp.Y        = 0;
+            }
+            return cp;
+        }
+    }
+
     public ScreensaverForm(Settings settings, WeatherService? weather, Screen screen, bool isPrimary, bool isPreview = false)
     {
+        _previewParentHwnd = IntPtr.Zero; // must be set before Show() if preview
         _settings = settings;
         _weather = weather;
         _isPrimary = isPrimary;
@@ -168,8 +190,13 @@ public class ScreensaverForm : Form
 
             isNight = _weather?.Current?.IsNight(_settings.TimeOfDay)
                       ?? DefaultIsNight(_settings.TimeOfDay);
+
+            // Ambient effects (stars/rays) even when no weather data yet
+            if (cond == null)
+                cond = WeatherCondition.Clear;
         }
 
+        Logger.Log($"RebuildScene: cond={cond}, isNight={isNight}, effects={_settings.EffectsOn}, previewCond={_settings.PreviewCondition}");
         float strength = _settings.EffectsStrength / 100f;
         _fx.Build(Width, Height, cond, isNight, strength, _settings.Position, _settings, _tSec);
         _buffer = null; // force redraw
@@ -255,27 +282,47 @@ public class ScreensaverForm : Form
         if (disposing)
         {
             _clockTimer.Dispose(); _fxTimer.Dispose(); _rotateTimer.Dispose();
+            _parentMonitor.Dispose();
             _fx.Dispose(); _buffer?.Dispose();
         }
         base.Dispose(disposing);
     }
 
-    // Allow preview mode: render into an HWND
-    public static ScreensaverForm CreatePreview(IntPtr hwnd, Settings settings, WeatherService? weather)
+    // Create a child window inside the Windows preview pane.
+    // No weather service — preview should be low-CPU with no network requests.
+    public static ScreensaverForm CreatePreview(IntPtr hwnd, Settings settings)
     {
-        var form = new ScreensaverForm(settings, weather, Screen.PrimaryScreen!, true, true);
-        form.FormBorderStyle = FormBorderStyle.None;
         var rect = new RECT();
         GetClientRect(hwnd, ref rect);
-        form.Size = new Size(rect.Right - rect.Left, rect.Bottom - rect.Top);
-        form.Location = new Point(0, 0);
-        SetParent(form.Handle, hwnd);
+        int w = Math.Max(rect.Right - rect.Left, 1);
+        int h = Math.Max(rect.Bottom - rect.Top, 1);
+        Logger.Log($"CreatePreview: parentHwnd={hwnd}, clientRect={w}x{h}");
+
+        var form = new ScreensaverForm(settings, null, Screen.PrimaryScreen!, true, true);
+        // _previewParentHwnd must be set before Show() triggers CreateHandle → CreateParams
+        form._previewParentHwnd = hwnd;
+        form.Size = new Size(w, h);
+
+        // Exit if the parent pane is destroyed (user navigates away in Screen Saver Settings)
+        form._parentMonitor.Interval = 500;
+        form._parentMonitor.Tick += (_, _) =>
+        {
+            if (!IsWindow(hwnd))
+            {
+                Logger.Log("Preview parent closed — exiting");
+                Application.Exit();
+            }
+        };
+        form._parentMonitor.Start();
+
         form.Show();
+        Logger.Log("Preview form shown");
         return form;
     }
 
     [DllImport("user32.dll")] private static extern IntPtr SetParent(IntPtr child, IntPtr parent);
     [DllImport("user32.dll")] private static extern bool GetClientRect(IntPtr hwnd, ref RECT rect);
+    [DllImport("user32.dll")] private static extern bool IsWindow(IntPtr hwnd);
     [StructLayout(LayoutKind.Sequential)]
     private struct RECT { public int Left, Top, Right, Bottom; }
 }

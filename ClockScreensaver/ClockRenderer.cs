@@ -1,9 +1,21 @@
 using System.Drawing.Drawing2D;
+using System.Globalization;
 
 namespace ClockScreensaver;
 
 public static class ClockRenderer
 {
+    private static readonly CultureInfo _en = CultureInfo.GetCultureInfo("en-US");
+
+    private static string FormatDate(DateTime d, DateFormat fmt) => fmt switch
+    {
+        DateFormat.Short    => d.ToString("ddd, MMM d", _en),    // "Wed, Sep 23"
+        DateFormat.Long     => d.ToString("dddd, MMMM d", _en),  // "Wednesday, September 23"
+        DateFormat.DayMonth => d.ToString("d MMMM", _en),        // "23 September"
+        DateFormat.Numeric  => d.ToString("dd.MM.yyyy"),          // "23.09.2026"
+        _                   => d.ToString("ddd, MMM d", _en),
+    };
+
     // Weather icon paths (SVG-equivalent drawn with GDI+)
     // Each returns a list of drawing actions on a normalized 24x24 grid
     public static void DrawWeatherIcon(Graphics g, WeatherCondition cond, RectangleF rect, Color color)
@@ -123,10 +135,8 @@ public static class ClockRenderer
         float subEm = emSize * 0.32f;
         using var subFont = FontManager.GetFont(settings, subEm);
 
-        // Build sub-line
-        string? datePart = settings.ShowDate
-            ? now.ToString("ddd, d MMM")
-            : null;
+        // Build sub-line (always English, regardless of system locale)
+        string? datePart = settings.ShowDate ? FormatDate(now, settings.DateFmt) : null;
 
         string? tempPart = null;
         WeatherCondition? wxCond = null;

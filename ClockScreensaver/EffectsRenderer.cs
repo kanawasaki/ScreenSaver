@@ -26,6 +26,7 @@ public class EffectsRenderer : IDisposable
     private WeatherCondition? _lastPicCond;
     private bool _lastPicNight;
     private int _lastPicBright;
+    private PictureFit _lastPicFit;
 
     public void Build(int width, int height, WeatherCondition? cond, bool isNight, float strength,
                       ClockPosition clockPos, Settings settings, double tSec = 0)
@@ -95,10 +96,11 @@ public class EffectsRenderer : IDisposable
 
         // Only rebuild if something changed
         if (path == _lastPicPath && cond == _lastPicCond && isNight == _lastPicNight
-            && settings.PictureBrightness == _lastPicBright && _filteredBg != null) return;
+            && settings.PictureBrightness == _lastPicBright && settings.PictureFit == _lastPicFit
+            && _filteredBg != null) return;
 
         _lastPicPath = path; _lastPicCond = cond; _lastPicNight = isNight;
-        _lastPicBright = settings.PictureBrightness;
+        _lastPicBright = settings.PictureBrightness; _lastPicFit = settings.PictureFit;
 
         try
         {

@@ -614,7 +614,7 @@ public class SettingsForm : Form
         _btnTest.Enabled        = !_work.LocationAuto && _work.CityName.Length > 0;
         _cmbPreview.SelectedIndex = (int)_work.PreviewCondition;
 
-        _txtPicPath.Text       = _work.PicturePath;
+        _txtPicPath.Text       = Path.GetFileName(_work.PicturePath);
         _picGroup.Visible      = !string.IsNullOrEmpty(_work.PicturePath);
         _cmbFit.SelectedIndex  = _work.PictureFit == PictureFit.Cover ? 0 : 1;
         SetSlider(_trkPicBright, _lblPicBright, _work.PictureBrightness, "%");
@@ -646,7 +646,6 @@ public class SettingsForm : Form
         _work.LocationAuto = _radAuto.Checked;
         _work.CityName  = _txtCity.Text.Trim();
         _work.PreviewCondition = (PreviewCondition)_cmbPreview.SelectedIndex;
-        _work.PicturePath = _txtPicPath.Text;
         _work.PictureFit  = _cmbFit.SelectedIndex == 0 ? PictureFit.Cover : PictureFit.Contain;
         _work.PictureBrightness = _trkPicBright.Value;
         _work.EffectsOn   = _chkFx.Checked;
@@ -704,9 +703,11 @@ public class SettingsForm : Form
         {
             Directory.CreateDirectory(Settings.PictureDir);
             string ext = Path.GetExtension(dlg.FileName).ToLowerInvariant();
-            dest = Path.Combine(Settings.PictureDir, "background" + ext);
+            // Unique name so the renderer sees a new path and rebuilds the background.
+            dest = Path.Combine(Settings.PictureDir, $"background-{DateTime.Now:yyyyMMdd-HHmmss-fff}{ext}");
             File.Copy(dlg.FileName, dest, overwrite: true);
             Logger.Log($"Picture copied: {dlg.FileName} → {dest}");
+            DeleteOldPictures(dest);
         }
         catch (Exception ex)
         {
@@ -720,6 +721,23 @@ public class SettingsForm : Form
         _txtPicPath.Text  = Path.GetFileName(dest);
         _picGroup.Visible = true;
         MarkDirty();
+    }
+
+    private static void DeleteOldPictures(string keep)
+    {
+        foreach (var file in Directory.GetFiles(Settings.PictureDir))
+        {
+            if (string.Equals(file, keep, StringComparison.OrdinalIgnoreCase)) continue;
+            try
+            {
+                File.Delete(file);
+                Logger.Log($"Old picture deleted: {file}");
+            }
+            catch (Exception ex)
+            {
+                Logger.Log($"Could not delete old picture {file}: {ex.Message}");
+            }
+        }
     }
 
     protected override void Dispose(bool disposing)

@@ -68,6 +68,7 @@ public class Settings
                 if (s != null)
                 {
                     Logger.Log($"Settings loaded from {SettingsFile}");
+                    s.RepairPicturePath();
                     return s;
                 }
             }
@@ -78,6 +79,31 @@ public class Settings
         }
         Logger.Log("Using default settings");
         return new Settings();
+    }
+
+    // Older builds saved only the file name; recover by using the newest file in PictureDir.
+    private void RepairPicturePath()
+    {
+        if (string.IsNullOrEmpty(PicturePath)) return;
+        if (Path.IsPathRooted(PicturePath) && File.Exists(PicturePath)) return;
+
+        Logger.Log($"PicturePath \"{PicturePath}\" is not a full path or the file is missing");
+        try
+        {
+            var newest = Directory.Exists(PictureDir)
+                ? new DirectoryInfo(PictureDir).GetFiles().OrderByDescending(f => f.LastWriteTimeUtc).FirstOrDefault()
+                : null;
+            if (newest != null)
+            {
+                PicturePath = newest.FullName;
+                Logger.Log($"PicturePath recovered → {PicturePath}");
+            }
+            else Logger.Log($"No picture found in {PictureDir}");
+        }
+        catch (Exception ex)
+        {
+            Logger.Log($"PicturePath recovery failed: {ex.GetType().Name}: {ex.Message}");
+        }
     }
 
     // Returns null on success, error message on failure.

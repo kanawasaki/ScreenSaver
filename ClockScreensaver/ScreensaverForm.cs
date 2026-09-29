@@ -14,7 +14,6 @@ public class ScreensaverForm : Form
     private IntPtr _previewParentHwnd; // set before CreateHandle
 
     private readonly EffectsRenderer _fx = new();
-    private System.Windows.Forms.Timer _clockTimer = new();
     private System.Windows.Forms.Timer _fxTimer = new();
     private System.Windows.Forms.Timer _rotateTimer = new();
     private System.Windows.Forms.Timer _parentMonitor = new();
@@ -73,7 +72,13 @@ public class ScreensaverForm : Form
         FormBorderStyle = FormBorderStyle.None;
         ShowInTaskbar = false;
         // Hide cursor (WinForms has no Cursors.None; override WndProc instead)
-        SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint | ControlStyles.OptimizedDoubleBuffer, true);
+        // OptimizedDoubleBuffer is skipped for the preview: this Form is reparented as a
+        // WS_CHILD of a foreign process's HWND, and the built-in double-buffer surface does
+        // not composite reliably across that process boundary. We already do our own manual
+        // buffering via _buffer below, so it isn't needed anyway.
+        var styles = ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint;
+        if (!isPreview) styles |= ControlStyles.OptimizedDoubleBuffer;
+        SetStyle(styles, true);
 
         if (!isPreview)
         {
@@ -86,12 +91,10 @@ public class ScreensaverForm : Form
         if (weather != null)
             weather.Updated += () => { if (IsHandleCreated && !IsDisposed) Invoke(() => RebuildScene(true)); };
 
-        // 1-second clock timer
-        _clockTimer.Interval = 100; // check more often, draw only on second change
-        _clockTimer.Tick += (_, _) => Invalidate();
-
-        // Effects timer ~30fps
-        _fxTimer.Interval = 33;
+        // Effects timer also drives the clock repaint (100ms is frequent enough for
+        // 1-second clock resolution) — a separate clock timer at the same rate was pure
+        // redundant repaint work.
+        _fxTimer.Interval = 100; // ~10fps — ambient rain/snow/rays read as smooth at this rate and it keeps CPU use down
         _fxTimer.Tick += FxTick;
 
         // Rotation timer (10 minutes)
@@ -102,7 +105,6 @@ public class ScreensaverForm : Form
             _rotateTimer.Start();
         }
 
-        _clockTimer.Start();
         _fxTimer.Start();
 
         if (weather != null && isPrimary)
@@ -211,9 +213,15 @@ public class ScreensaverForm : Form
         return h >= 20 || h < 6;
     }
 
+    private static bool _loggedFirstPaint = false;
     protected override void OnPaint(PaintEventArgs e)
     {
         int w = Width, h = Height;
+        if (_isPreview && !_loggedFirstPaint)
+        {
+            Logger.Log($"ScreensaverForm.OnPaint (preview): size={w}x{h}, isPrimary={_isPrimary}, handleCreated={IsHandleCreated}");
+            _loggedFirstPaint = true;
+        }
         if (w <= 0 || h <= 0) return;
 
         // Maintain buffer
@@ -281,7 +289,7 @@ public class ScreensaverForm : Form
     {
         if (disposing)
         {
-            _clockTimer.Dispose(); _fxTimer.Dispose(); _rotateTimer.Dispose();
+            _fxTimer.Dispose(); _rotateTimer.Dispose();
             _parentMonitor.Dispose();
             _fx.Dispose(); _buffer?.Dispose();
         }
@@ -316,13 +324,20 @@ public class ScreensaverForm : Form
         form._parentMonitor.Start();
 
         form.Show();
-        Logger.Log("Preview form shown");
+        // The preview HWND is a sibling within a foreign process's monitor-bezel control;
+        // newly created children aren't guaranteed to land on top of existing siblings there,
+        // and if a sibling fully covers our rect we never receive a paintable region at all.
+        BringWindowToTop(form.Handle);
+        form.Invalidate();
+        form.Update();
+        Logger.Log($"Preview form shown, handleCreated={form.IsHandleCreated}, visible={form.Visible}");
         return form;
     }
 
     [DllImport("user32.dll")] private static extern IntPtr SetParent(IntPtr child, IntPtr parent);
     [DllImport("user32.dll")] private static extern bool GetClientRect(IntPtr hwnd, ref RECT rect);
     [DllImport("user32.dll")] private static extern bool IsWindow(IntPtr hwnd);
+    [DllImport("user32.dll")] private static extern bool BringWindowToTop(IntPtr hwnd);
     [StructLayout(LayoutKind.Sequential)]
     private struct RECT { public int Left, Top, Right, Bottom; }
 }

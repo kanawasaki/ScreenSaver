@@ -57,17 +57,19 @@ public class Settings
         Converters = { new JsonStringEnumConverter() },
     };
 
-    public static Settings Load()
+    public static Settings Load() => LoadFrom(SettingsFile);
+
+    public static Settings LoadFrom(string path)
     {
         try
         {
-            if (File.Exists(SettingsFile))
+            if (File.Exists(path))
             {
-                var json = File.ReadAllText(SettingsFile);
+                var json = File.ReadAllText(path);
                 var s = JsonSerializer.Deserialize<Settings>(json, _opts);
                 if (s != null)
                 {
-                    Logger.Log($"Settings loaded from {SettingsFile}");
+                    Logger.Log($"Settings loaded from {path}");
                     s.RepairPicturePath();
                     return s;
                 }

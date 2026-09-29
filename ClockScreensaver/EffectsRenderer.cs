@@ -120,7 +120,11 @@ public class EffectsRenderer : IDisposable
             _filteredBg?.Dispose();
             _filteredBg = bmp;
         }
-        catch { _filteredBg = null; }
+        catch (Exception ex)
+        {
+            Logger.Log($"RebuildBackground FAILED for \"{path}\" ({width}x{height}): {ex.GetType().Name}: {ex.Message}");
+            _filteredBg = null;
+        }
     }
 
     private static ColorMatrix BuildColorMatrix(WeatherCondition? cond, bool isNight, float picBright)
@@ -250,15 +254,17 @@ public class EffectsRenderer : IDisposable
         g.Restore(state);
     }
 
+    private readonly SolidBrush _starBrush = new(Color.White);
     private void DrawStars(Graphics g, double t, float dt, int width, int height, bool staticMode)
     {
+        if (_stars.Count == 0) return;
         foreach (var st in _stars)
         {
             float a = st.Alpha * _strength * (0.55f + 0.45f * MathF.Sin((float)(t * st.Speed + st.Phase)));
             if (staticMode) a = st.Alpha * _strength * 0.7f;
             if (a <= 0) continue;
-            using var brush = new SolidBrush(Color.FromArgb((int)(255 * a), 230, 236, 255));
-            g.FillEllipse(brush, st.X - st.Radius, st.Y - st.Radius, st.Radius * 2, st.Radius * 2);
+            _starBrush.Color = Color.FromArgb((int)(255 * a), 230, 236, 255);
+            g.FillEllipse(_starBrush, st.X - st.Radius, st.Y - st.Radius, st.Radius * 2, st.Radius * 2);
         }
     }
 
@@ -277,6 +283,8 @@ public class EffectsRenderer : IDisposable
         }
     }
 
+    private readonly SolidBrush _dropBodyBrush = new(Color.White);
+    private readonly Pen _dropRimPen = new(Color.White, 0.8f);
     private void DrawDrops(Graphics g, float dt, int width, int height)
     {
         if (_maxDrops == 0) return;
@@ -297,13 +305,14 @@ public class EffectsRenderer : IDisposable
 
             float r = d.Radius;
             // Simple translucent drop
-            using var body = new SolidBrush(Color.FromArgb((int)(255 * 0.15f * a), 180, 200, 230));
-            g.FillEllipse(body, d.X - r, d.Y - r * 1.12f, r * 2, r * 2.24f);
-            using var rim = new Pen(Color.FromArgb((int)(255 * 0.35f * a), 255, 255, 255), 0.8f);
-            g.DrawArc(rim, d.X - r * 0.85f, d.Y - r * 0.95f, r * 1.7f, r * 1.9f, 11, 92);
+            _dropBodyBrush.Color = Color.FromArgb((int)(255 * 0.15f * a), 180, 200, 230);
+            g.FillEllipse(_dropBodyBrush, d.X - r, d.Y - r * 1.12f, r * 2, r * 2.24f);
+            _dropRimPen.Color = Color.FromArgb((int)(255 * 0.35f * a), 255, 255, 255);
+            g.DrawArc(_dropRimPen, d.X - r * 0.85f, d.Y - r * 0.95f, r * 1.7f, r * 1.9f, 11, 92);
         }
     }
 
+    private readonly SolidBrush _flakeBrush = new(Color.White);
     private void DrawFlakes(Graphics g, double t, float dt, int width, int height)
     {
         foreach (var f in _flakes)
@@ -312,8 +321,8 @@ public class EffectsRenderer : IDisposable
             f.X += MathF.Sin((float)(t * f.Sway + f.Phase)) * 18 * dt;
             if (f.Y > height + 10) ResetFlake(f, width, height);
             float a = f.Alpha * (0.4f + 0.6f * _strength);
-            using var brush = new SolidBrush(Color.FromArgb((int)(255 * a), 255, 255, 255));
-            g.FillEllipse(brush, f.X - f.Radius, f.Y - f.Radius, f.Radius * 2, f.Radius * 2);
+            _flakeBrush.Color = Color.FromArgb((int)(255 * a), 255, 255, 255);
+            g.FillEllipse(_flakeBrush, f.X - f.Radius, f.Y - f.Radius, f.Radius * 2, f.Radius * 2);
         }
     }
 
@@ -356,7 +365,14 @@ public class EffectsRenderer : IDisposable
 
     private float Rnd(float a, float b) => a + (float)_rng.NextDouble() * (b - a);
 
-    public void Dispose() { _filteredBg?.Dispose(); }
+    public void Dispose()
+    {
+        _filteredBg?.Dispose();
+        _starBrush.Dispose();
+        _dropBodyBrush.Dispose();
+        _dropRimPen.Dispose();
+        _flakeBrush.Dispose();
+    }
 
     // Private particle data types
     private class Streak(float x, float y, float len, float spd, float alpha)

@@ -94,7 +94,7 @@ public class SettingsForm : Form
         _work     = Copy(s);
 
         SuspendLayout();
-        Text            = "Clock Screensaver — Settings";
+        Text            = $"Clock Screensaver — Settings  (v{BuildInfo.Version} · {BuildInfo.GitHash})";
         ClientSize      = new Size(FormW, FormH);
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox     = false;
@@ -185,6 +185,18 @@ public class SettingsForm : Form
             _tabBtns[i] = btn;
             sidebar.Controls.Add(btn);
         }
+
+        // Version/commit footer — lets us tell which build is actually installed
+        var verLbl = new Label
+        {
+            Text = $"v{BuildInfo.Version} · {BuildInfo.GitHash}",
+            Left = 0, Top = ContentH - 44, Width = SidebarW,
+            TextAlign = ContentAlignment.MiddleCenter,
+            ForeColor = FGDim,
+            Font = new Font("Segoe UI", 7f),
+            AutoSize = false, Height = 16,
+        };
+        sidebar.Controls.Add(verLbl);
 
         // Log-file shortcut at bottom
         var logLbl = new Label
@@ -479,6 +491,7 @@ public class SettingsForm : Form
         _preview.Left = px; _preview.Top = py; _preview.Width = pw; _preview.Height = ph;
         _preview.BackColor = Color.Black;
         host.Controls.Add(_preview);
+        _preview.BringToFront(); // must render above the border panel, not be clipped behind it
 
         // Condition info label below preview
         var condLbl = new Label
@@ -1107,7 +1120,11 @@ public class SettingsForm : Form
         public void UpdateSettings(Settings s)
         {
             _settings = s;
-            _dirty    = true;
+            // Rebuild immediately rather than waiting for the next timer tick — otherwise
+            // the very first paint (and any forced capture via DrawToBitmap) can race ahead
+            // of the timer and render before the picture/effects are ever built.
+            RebuildFx();
+            Invalidate();
         }
 
         public void Tick()

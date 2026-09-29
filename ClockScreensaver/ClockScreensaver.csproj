@@ -17,12 +17,38 @@
     <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
     <AssemblyVersion>1.0.0.0</AssemblyVersion>
     <FileVersion>1.0.0.0</FileVersion>
-    <Version>1.0.0</Version>
+    <Version>0.2.1</Version>
   </PropertyGroup>
 
   <ItemGroup>
     <EmbeddedResource Include="fonts\*.ttf" />
     <EmbeddedResource Include="fonts\*.txt" />
   </ItemGroup>
+
+  <!-- Stamp the build with the current git commit so installed builds can be told apart. -->
+  <Target Name="WriteBuildInfo" BeforeTargets="BeforeCompile;CoreCompile">
+    <Exec Command="git rev-parse --short HEAD" ConsoleToMSBuild="true" StandardOutputImportance="low" ContinueOnError="true" WorkingDirectory="$(MSBuildProjectDirectory)">
+      <Output TaskParameter="ConsoleOutput" ItemName="GitHashOutput" />
+    </Exec>
+    <PropertyGroup>
+      <GitHash Condition="'@(GitHashOutput)' != ''">@(GitHashOutput)</GitHash>
+      <GitHash Condition="'$(GitHash)' == ''">unknown</GitHash>
+      <BuildTimestamp>$([System.DateTime]::UtcNow.ToString("yyyy-MM-dd HH:mm"))</BuildTimestamp>
+    </PropertyGroup>
+    <ItemGroup>
+      <BuildInfoLines Include="namespace ClockScreensaver%3B" />
+      <BuildInfoLines Include="internal static class BuildInfo" />
+      <BuildInfoLines Include="{" />
+      <BuildInfoLines Include="    public const string Version = &quot;$(Version)&quot;%3B" />
+      <BuildInfoLines Include="    public const string GitHash = &quot;$(GitHash)&quot;%3B" />
+      <BuildInfoLines Include="    public const string BuiltAt = &quot;$(BuildTimestamp) UTC&quot;%3B" />
+      <BuildInfoLines Include="}" />
+    </ItemGroup>
+    <MakeDir Directories="$(IntermediateOutputPath)" Condition="!Exists('$(IntermediateOutputPath)')" />
+    <WriteLinesToFile File="$(IntermediateOutputPath)BuildInfo.g.cs" Overwrite="true" Lines="@(BuildInfoLines)" />
+    <ItemGroup>
+      <Compile Include="$(IntermediateOutputPath)BuildInfo.g.cs" />
+    </ItemGroup>
+  </Target>
 
 </Project>

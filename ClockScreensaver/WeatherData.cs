@@ -26,6 +26,23 @@ public class WeatherResult
         return now < Sunrise || now > Sunset;
     }
 
+    // Finer-grained than IsNight: dawn/dusk within 45 min of actual sunrise/sunset.
+    public SceneTime GetSceneTime(TimeOfDay tod)
+    {
+        if (tod == TimeOfDay.Day) return SceneTime.Day;
+        if (tod == TimeOfDay.Night) return SceneTime.Night;
+        var now = DateTime.Now;
+        if (Sunrise == default || Sunset == default)
+        {
+            var h = now.Hour;
+            return (h >= 20 || h < 6) ? SceneTime.Night : SceneTime.Day;
+        }
+        const double windowMin = 45;
+        if (Math.Abs((now - Sunrise).TotalMinutes) <= windowMin) return SceneTime.Dawn;
+        if (Math.Abs((now - Sunset).TotalMinutes) <= windowMin) return SceneTime.Dusk;
+        return (now < Sunrise || now > Sunset) ? SceneTime.Night : SceneTime.Day;
+    }
+
     public float GetTemp(WeatherUnit unit) =>
         unit == WeatherUnit.F ? MathF.Round(TempC * 9f / 5f + 32f) : TempC;
 }

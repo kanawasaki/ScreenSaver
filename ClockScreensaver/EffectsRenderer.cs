@@ -22,14 +22,23 @@ public class EffectsRenderer : IDisposable
 
     // Image with applied color filter
     private Bitmap? _filteredBg;
+    private Bitmap? _prevBg; // fading out, for cross-fade on scene change
+    private double _fadeStart = -1;
+    private const float FadeDuration = 3f;
     private string? _lastPicPath;
     private WeatherCondition? _lastPicCond;
     private bool _lastPicNight;
     private int _lastPicBright;
     private PictureFit _lastPicFit;
+    private readonly LandscapeLibrary _landscapes = new();
+
+    public bool HasBackground => _filteredBg != null || _prevBg != null;
+    public string? CurrentBackgroundPath => _lastPicPath;
+    public LandscapeScanResult? LandscapeScan => _landscapes.Result;
 
     public void Build(int width, int height, WeatherCondition? cond, bool isNight, float strength,
-                      ClockPosition clockPos, Settings settings, double tSec = 0)
+                      ClockPosition clockPos, Settings settings, double tSec = 0,
+                      SceneTime sceneTime = SceneTime.Day, Season season = Season.Spring)
     {
         _currentCond = cond;
         _isNight = isNight;
@@ -80,26 +89,33 @@ public class EffectsRenderer : IDisposable
         if (cond == WeatherCondition.Storm)
             _nextFlash = tSec + Rnd(6, 14);
 
-        RebuildBackground(settings, width, height, cond, isNight);
+        RebuildBackground(settings, width, height, cond, isNight, sceneTime, season, tSec);
     }
 
+    // Resolves which picture should be showing (landscape match or "My picture"), and
+    // rebuilds the filtered bitmap only when the resolved source or its styling changed.
+    // Safe to call often — it's a cheap no-op when nothing changed.
     public void RebuildBackground(Settings settings, int width, int height,
-                                   WeatherCondition? cond, bool isNight)
+                                   WeatherCondition? cond, bool isNight,
+                                   SceneTime sceneTime, Season season, double tSec)
     {
-        string path = settings.PicturePath;
-        if (string.IsNullOrEmpty(path) || !File.Exists(path))
+        string? path = ResolvePicturePath(settings, cond, sceneTime, season);
+
+        if (path == null)
         {
+            _prevBg?.Dispose(); _prevBg = null;
             _filteredBg?.Dispose(); _filteredBg = null;
             _lastPicPath = null;
             return;
         }
 
-        // Only rebuild if something changed
-        if (path == _lastPicPath && cond == _lastPicCond && isNight == _lastPicNight
-            && settings.PictureBrightness == _lastPicBright && settings.PictureFit == _lastPicFit
-            && _filteredBg != null) return;
+        bool sourceChanged = path != _lastPicPath;
+        bool styleChanged = cond != _lastPicCond || isNight != _lastPicNight
+            || settings.PictureBrightness != _lastPicBright || settings.PictureFit != _lastPicFit;
 
-        _lastPicPath = path; _lastPicCond = cond; _lastPicNight = isNight;
+        if (!sourceChanged && !styleChanged && _filteredBg != null) return;
+
+        _lastPicCond = cond; _lastPicNight = isNight;
         _lastPicBright = settings.PictureBrightness; _lastPicFit = settings.PictureFit;
 
         try
@@ -117,14 +133,51 @@ public class EffectsRenderer : IDisposable
                 : ContainRect(orig.Size, new Size(width, height));
 
             gr.DrawImage(orig, dest, 0, 0, orig.Width, orig.Height, GraphicsUnit.Pixel, attrs);
-            _filteredBg?.Dispose();
+
+            if (sourceChanged && _filteredBg != null)
+            {
+                _prevBg?.Dispose();
+                _prevBg = _filteredBg;
+                _fadeStart = tSec;
+            }
             _filteredBg = bmp;
+            _lastPicPath = path;
         }
         catch (Exception ex)
         {
             Logger.Log($"RebuildBackground FAILED for \"{path}\" ({width}x{height}): {ex.GetType().Name}: {ex.Message}");
-            _filteredBg = null;
+            _prevBg?.Dispose(); _prevBg = null;
+            _filteredBg?.Dispose(); _filteredBg = null;
+            _lastPicPath = null;
         }
+    }
+
+    // Tracks the scene the current pick was made for, so repeated calls with an unchanged
+    // scene (resize, periodic re-check, etc.) don't re-roll the random choice every time.
+    private (WeatherCondition weather, SceneTime time, Season season)? _lastSceneKey;
+
+    // Rescans the landscape folder when it changes (cheap no-op otherwise).
+    private string? ResolvePicturePath(Settings settings, WeatherCondition? cond, SceneTime sceneTime, Season season)
+    {
+        if (settings.PictureSource == PictureSource.MatchingLandscape)
+        {
+            _landscapes.EnsureScanned(settings.LandscapeFolder);
+            var weatherKey = cond ?? WeatherCondition.Clear;
+            var key = (weatherKey, sceneTime, season);
+            if (_lastSceneKey == key) return _lastPicPath;
+
+            _lastSceneKey = key;
+            var pick = _landscapes.Pick(weatherKey, sceneTime, season, _rng);
+            if (pick != null) return pick.Path;
+            // No landscape match — fall back to "My picture", then black.
+        }
+        else
+        {
+            _lastSceneKey = null;
+        }
+
+        return !string.IsNullOrEmpty(settings.PicturePath) && File.Exists(settings.PicturePath)
+            ? settings.PicturePath : null;
     }
 
     private static ColorMatrix BuildColorMatrix(WeatherCondition? cond, bool isNight, float picBright)
@@ -188,9 +241,7 @@ public class EffectsRenderer : IDisposable
     {
         g.SmoothingMode = SmoothingMode.AntiAlias;
 
-        // Background image
-        if (_filteredBg != null)
-            g.DrawImageUnscaled(_filteredBg, 0, 0);
+        DrawBackground(g, tSec, width, height);
 
         if (reducedMotion)
         {
@@ -206,6 +257,38 @@ public class EffectsRenderer : IDisposable
         DrawDrops(g, dt, width, height);
         DrawFlakes(g, tSec, dt, width, height);
         DrawLightning(g, tSec, dt, width, height);
+    }
+
+    // Draws the previous background fading out under the current one fading in, over
+    // FadeDuration seconds, when the picture source just changed; otherwise just the current one.
+    private void DrawBackground(Graphics g, double tSec, int width, int height)
+    {
+        if (_prevBg != null)
+        {
+            float fadeT = _fadeStart >= 0 ? (float)((tSec - _fadeStart) / FadeDuration) : 1f;
+            fadeT = Math.Clamp(fadeT, 0f, 1f);
+            if (fadeT >= 1f)
+            {
+                _prevBg.Dispose();
+                _prevBg = null;
+            }
+            else
+            {
+                g.DrawImageUnscaled(_prevBg, 0, 0);
+                if (_filteredBg != null)
+                {
+                    using var ia = new ImageAttributes();
+                    var cm = new ColorMatrix { Matrix33 = fadeT };
+                    ia.SetColorMatrix(cm, ColorMatrixFlag.Default, ColorAdjustType.Bitmap);
+                    g.DrawImage(_filteredBg, new Rectangle(0, 0, width, height),
+                        0, 0, _filteredBg.Width, _filteredBg.Height, GraphicsUnit.Pixel, ia);
+                }
+                return;
+            }
+        }
+
+        if (_filteredBg != null)
+            g.DrawImageUnscaled(_filteredBg, 0, 0);
     }
 
     private void DrawRays(Graphics g, double t, int width, int height)
@@ -368,6 +451,7 @@ public class EffectsRenderer : IDisposable
     public void Dispose()
     {
         _filteredBg?.Dispose();
+        _prevBg?.Dispose();
         _starBrush.Dispose();
         _dropBodyBrush.Dispose();
         _dropRimPen.Dispose();

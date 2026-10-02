@@ -66,9 +66,18 @@ public class SettingsForm : Form
     private ComboBox _cmbPreview    = new();
 
     // Picture tab controls
+    private RadioButton _radMyPicture   = new();
+    private RadioButton _radLandscape   = new();
+    private Panel    _myPicGroup    = new();
     private TextBox  _txtPicPath    = new();
     private Button   _btnBrowse     = new();
     private Button   _btnClear      = new();
+    private Panel    _landscapeGroup     = new();
+    private TextBox  _txtLandscapeFolder = new();
+    private Button   _btnBrowseFolder    = new();
+    private Button   _btnOpenFolder      = new();
+    private Label    _lblLandscapeSummary = new();
+    private readonly LandscapeLibrary _summaryLib = new();
     private Panel    _picGroup      = new();
     private ComboBox _cmbFit        = new();
     private DarkSlider _trkPicBright  = new();
@@ -377,9 +386,29 @@ public class SettingsForm : Form
         int y = 18;
         SectionHead(_picPanel, "Background picture", ref y);
 
-        // Path row
-        var row = new Panel { Left = 16, Top = y, Width = 350, Height = 28, BackColor = Color.Transparent };
-        _picPanel.Controls.Add(row);
+        // Source selector
+        _radMyPicture.Text = "My picture"; StyleRadio(_radMyPicture);
+        _radMyPicture.Left = 16; _radMyPicture.Top = y; _radMyPicture.Width = 130;
+        _radLandscape.Text = "Matching landscape from folder"; StyleRadio(_radLandscape);
+        _radLandscape.Left = 146; _radLandscape.Top = y; _radLandscape.Width = 220;
+        _radMyPicture.CheckedChanged += (_, _) =>
+        {
+            _work.PictureSource = _radMyPicture.Checked ? PictureSource.MyPicture : PictureSource.MatchingLandscape;
+            _myPicGroup.Visible = _radMyPicture.Checked;
+            _landscapeGroup.Visible = !_radMyPicture.Checked;
+            UpdatePicGroupVisibility();
+            MarkDirty();
+        };
+        _picPanel.Controls.Add(_radMyPicture);
+        _picPanel.Controls.Add(_radLandscape);
+        y += 28;
+
+        // ── "My picture" sub-group ──
+        _myPicGroup = new Panel { Left = 0, Top = y, Width = ContentW, Height = 36, BackColor = Color.Transparent };
+        _picPanel.Controls.Add(_myPicGroup);
+
+        var row = new Panel { Left = 16, Top = 0, Width = 350, Height = 28, BackColor = Color.Transparent };
+        _myPicGroup.Controls.Add(row);
 
         _txtPicPath.Left = 0; _txtPicPath.Top = 1; _txtPicPath.Width = 216; _txtPicPath.Height = 26;
         _txtPicPath.BackColor = BG3; _txtPicPath.ForeColor = FGDim;
@@ -397,12 +426,40 @@ public class SettingsForm : Form
         _btnClear.Click += (_, _) =>
         {
             _work.PicturePath = ""; _txtPicPath.Text = "";
-            _picGroup.Visible  = false; MarkDirty();
+            UpdatePicGroupVisibility(); MarkDirty();
         };
         row.Controls.Add(_btnClear);
-        y += 36;
 
-        // Collapsible options
+        // ── "Matching landscape" sub-group ──
+        _landscapeGroup = new Panel { Left = 0, Top = y, Width = ContentW, Height = 124, BackColor = Color.Transparent };
+        _picPanel.Controls.Add(_landscapeGroup);
+
+        var frow = new Panel { Left = 16, Top = 0, Width = 350, Height = 28, BackColor = Color.Transparent };
+        _landscapeGroup.Controls.Add(frow);
+
+        _txtLandscapeFolder.Left = 0; _txtLandscapeFolder.Top = 1; _txtLandscapeFolder.Width = 216; _txtLandscapeFolder.Height = 26;
+        _txtLandscapeFolder.BackColor = BG3; _txtLandscapeFolder.ForeColor = FGDim;
+        _txtLandscapeFolder.ReadOnly = true; _txtLandscapeFolder.BorderStyle = BorderStyle.FixedSingle;
+        frow.Controls.Add(_txtLandscapeFolder);
+
+        _btnBrowseFolder.Left = 224; _btnBrowseFolder.Top = 1; _btnBrowseFolder.Width = 60; _btnBrowseFolder.Height = 26;
+        _btnBrowseFolder.Text = "Browse"; StyleButton(_btnBrowseFolder);
+        _btnBrowseFolder.Click += BrowseLandscapeFolder;
+        frow.Controls.Add(_btnBrowseFolder);
+
+        _btnOpenFolder.Left = 16; _btnOpenFolder.Top = 34; _btnOpenFolder.Width = 110; _btnOpenFolder.Height = 26;
+        _btnOpenFolder.Text = "Open folder"; StyleButton(_btnOpenFolder);
+        _btnOpenFolder.Click += (_, _) => OpenLandscapeFolder();
+        _landscapeGroup.Controls.Add(_btnOpenFolder);
+
+        _lblLandscapeSummary.Left = 16; _lblLandscapeSummary.Top = 68; _lblLandscapeSummary.Width = ContentW - 32;
+        _lblLandscapeSummary.AutoSize = false; _lblLandscapeSummary.Height = 56;
+        _lblLandscapeSummary.ForeColor = FGMid;
+        _landscapeGroup.Controls.Add(_lblLandscapeSummary);
+
+        y += Math.Max(_myPicGroup.Height, _landscapeGroup.Height) + 8;
+
+        // Collapsible options (shared between both sources)
         _picGroup = new Panel { Left = 0, Top = y, Width = ContentW, BackColor = Color.Transparent };
         _picPanel.Controls.Add(_picGroup);
 
@@ -422,6 +479,48 @@ public class SettingsForm : Form
         AddSlider(_picGroup, ref gy, "Picture brightness", _trkPicBright, _lblPicBright, 5, 100, _work.PictureBrightness, "%",
             v => { _work.PictureBrightness = v; MarkDirty(); });
         _picGroup.Height = gy;
+    }
+
+    private void UpdatePicGroupVisibility()
+    {
+        _picGroup.Visible = _work.PictureSource == PictureSource.MatchingLandscape
+            || !string.IsNullOrEmpty(_work.PicturePath);
+    }
+
+    private void BrowseLandscapeFolder(object? sender, EventArgs e)
+    {
+        using var dlg = new FolderBrowserDialog
+        {
+            Description = "Choose a folder of weather-matched landscape pictures",
+            UseDescriptionForTitle = true,
+        };
+        if (Directory.Exists(_work.LandscapeFolder)) dlg.SelectedPath = _work.LandscapeFolder;
+
+        if (dlg.ShowDialog(this) != DialogResult.OK) return;
+
+        _work.LandscapeFolder = dlg.SelectedPath;
+        _txtLandscapeFolder.Text = dlg.SelectedPath;
+        RefreshLandscapeSummary();
+        MarkDirty();
+    }
+
+    private void OpenLandscapeFolder()
+    {
+        try
+        {
+            Directory.CreateDirectory(_work.LandscapeFolder);
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(_work.LandscapeFolder) { UseShellExecute = true });
+        }
+        catch (Exception ex)
+        {
+            Logger.Log($"OpenLandscapeFolder failed for \"{_work.LandscapeFolder}\": {ex.Message}");
+        }
+    }
+
+    private void RefreshLandscapeSummary()
+    {
+        var scan = _summaryLib.EnsureScanned(_work.LandscapeFolder);
+        _lblLandscapeSummary.Text = LandscapeSummary.Describe(scan);
     }
 
     private void BuildEffectsTab(Panel host)
@@ -627,8 +726,14 @@ public class SettingsForm : Form
         _btnTest.Enabled        = !_work.LocationAuto && _work.CityName.Length > 0;
         _cmbPreview.SelectedIndex = (int)_work.PreviewCondition;
 
-        _txtPicPath.Text       = Path.GetFileName(_work.PicturePath);
-        _picGroup.Visible      = !string.IsNullOrEmpty(_work.PicturePath);
+        _radMyPicture.Checked    = _work.PictureSource == PictureSource.MyPicture;
+        _radLandscape.Checked    = _work.PictureSource == PictureSource.MatchingLandscape;
+        _myPicGroup.Visible      = _work.PictureSource == PictureSource.MyPicture;
+        _landscapeGroup.Visible  = _work.PictureSource == PictureSource.MatchingLandscape;
+        _txtPicPath.Text         = Path.GetFileName(_work.PicturePath);
+        _txtLandscapeFolder.Text = _work.LandscapeFolder;
+        RefreshLandscapeSummary();
+        UpdatePicGroupVisibility();
         _cmbFit.SelectedIndex  = _work.PictureFit == PictureFit.Cover ? 0 : 1;
         SetSlider(_trkPicBright, _lblPicBright, _work.PictureBrightness, "%");
 
@@ -659,6 +764,7 @@ public class SettingsForm : Form
         _work.LocationAuto = _radAuto.Checked;
         _work.CityName  = _txtCity.Text.Trim();
         _work.PreviewCondition = (PreviewCondition)_cmbPreview.SelectedIndex;
+        _work.PictureSource = _radMyPicture.Checked ? PictureSource.MyPicture : PictureSource.MatchingLandscape;
         _work.PictureFit  = _cmbFit.SelectedIndex == 0 ? PictureFit.Cover : PictureFit.Contain;
         _work.PictureBrightness = _trkPicBright.Value;
         _work.EffectsOn   = _chkFx.Checked;
@@ -732,7 +838,7 @@ public class SettingsForm : Form
 
         _work.PicturePath = dest;
         _txtPicPath.Text  = Path.GetFileName(dest);
-        _picGroup.Visible = true;
+        UpdatePicGroupVisibility();
         MarkDirty();
     }
 
@@ -889,7 +995,8 @@ public class SettingsForm : Form
         DateFmt = s.DateFmt,
         WeatherOn = s.WeatherOn, Unit = s.Unit, ShowConditionName = s.ShowConditionName,
         LocationAuto = s.LocationAuto, CityName = s.CityName, PreviewCondition = s.PreviewCondition,
-        PicturePath = s.PicturePath, PictureFit = s.PictureFit, PictureBrightness = s.PictureBrightness,
+        PictureSource = s.PictureSource, PicturePath = s.PicturePath, LandscapeFolder = s.LandscapeFolder,
+        PictureFit = s.PictureFit, PictureBrightness = s.PictureBrightness,
         EffectsOn = s.EffectsOn, EffectsStrength = s.EffectsStrength, TimeOfDay = s.TimeOfDay,
     };
 
@@ -901,7 +1008,8 @@ public class SettingsForm : Form
         dst.DateFmt = src.DateFmt;
         dst.WeatherOn = src.WeatherOn; dst.Unit = src.Unit; dst.ShowConditionName = src.ShowConditionName;
         dst.LocationAuto = src.LocationAuto; dst.CityName = src.CityName; dst.PreviewCondition = src.PreviewCondition;
-        dst.PicturePath = src.PicturePath; dst.PictureFit = src.PictureFit; dst.PictureBrightness = src.PictureBrightness;
+        dst.PictureSource = src.PictureSource; dst.PicturePath = src.PicturePath; dst.LandscapeFolder = src.LandscapeFolder;
+        dst.PictureFit = src.PictureFit; dst.PictureBrightness = src.PictureBrightness;
         dst.EffectsOn = src.EffectsOn; dst.EffectsStrength = src.EffectsStrength; dst.TimeOfDay = src.TimeOfDay;
     }
 
@@ -1170,15 +1278,21 @@ public class SettingsForm : Form
                            (DateTime.Now.Hour >= 20 || DateTime.Now.Hour < 6));
             }
 
+            var previewWeather = MakePreviewWeather();
+            SceneTime sceneTime = previewWeather?.GetSceneTime(_settings.TimeOfDay) ?? SceneTime.Day;
+            Season season = SeasonCalc.GetSeason(DateTime.Now, 0f);
+
             _fx.Build(VirtW, VirtH, cond, isNight, _settings.EffectsStrength / 100f,
-                _settings.Position, _settings, _tSec);
+                _settings.Position, _settings, _tSec, sceneTime, season);
             _dirty = false;
 
             if (CondLbl != null)
             {
                 string condName = cond.HasValue ? WmoMapper.Name(cond.Value) : "–";
-                string tod = isNight ? "night" : "day";
-                CondLbl.Text = $"Condition: {condName}\nTime: {tod}\n{(string.IsNullOrEmpty(_settings.PicturePath) ? "No background" : "Background set")}";
+                string picStatus = _settings.PictureSource == PictureSource.MatchingLandscape
+                    ? (_fx.CurrentBackgroundPath != null ? $"Picture: {Path.GetFileName(_fx.CurrentBackgroundPath)}" : "No matching picture")
+                    : (string.IsNullOrEmpty(_settings.PicturePath) ? "No background" : "Background set");
+                CondLbl.Text = $"Condition: {condName}\nTime: {sceneTime}\n{picStatus}";
             }
         }
 
@@ -1220,7 +1334,7 @@ public class SettingsForm : Form
 
                 float opacity = _settings.Brightness / 100f;
                 var weather = _settings.WeatherOn ? MakePreviewWeather() : null;
-                ClockRenderer.Draw(vg, _settings, weather, new Rectangle(0, 0, VirtW, VirtH), opacity);
+                ClockRenderer.Draw(vg, _settings, weather, new Rectangle(0, 0, VirtW, VirtH), opacity, _fx.HasBackground);
             }
 
             // Scale the virtual bitmap to fit the panel

@@ -105,7 +105,7 @@ public static class ClockRenderer
     private static void DrawDot(Graphics g, Pen p, PointF pt) =>
         g.DrawLine(p, pt, new PointF(pt.X + 0.01f, pt.Y));
 
-    public static void Draw(Graphics g, Settings settings, WeatherResult? weather, Rectangle bounds, float opacity)
+    public static void Draw(Graphics g, Settings settings, WeatherResult? weather, Rectangle bounds, float opacity, bool hasBackground = false)
     {
         if (opacity <= 0) return;
         g.SmoothingMode = SmoothingMode.AntiAlias;
@@ -163,7 +163,7 @@ public static class ClockRenderer
         PointF origin = GetOrigin(settings, bounds, timeSize.Width, totalHeight);
 
         // Apply text shadow when there's a background image
-        if (!string.IsNullOrEmpty(settings.PicturePath) && File.Exists(settings.PicturePath))
+        if (hasBackground)
         {
             using var shadowBrush = new SolidBrush(Color.FromArgb((byte)(alpha * 0.55), 0, 0, 0));
             g.DrawString(timeStr, font, shadowBrush, origin.X + 0, origin.Y + 2);

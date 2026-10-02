@@ -7,6 +7,7 @@ public enum ClockPosition { BottomRight, BottomLeft, TopLeft, TopRight, Center }
 public enum ClockFont { PlexMono, SpaceGrotesk, Fraunces, MajorMono, Syne, System }
 public enum ClockWeight { Light, Bold }
 public enum PictureFit { Cover, Contain }
+public enum PictureSource { MyPicture, MatchingLandscape }
 public enum TimeOfDay { Auto, Day, Night }
 public enum WeatherUnit { C, F }
 public enum PreviewCondition { Auto, Clear, PartlyCloudy, Cloudy, Rain, Snow, Storm }
@@ -19,6 +20,7 @@ public class Settings
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ClockScreensaver");
     private static readonly string SettingsFile = Path.Combine(DataDir, "settings.json");
     public static readonly string PictureDir = Path.Combine(DataDir, "picture");
+    public static readonly string DefaultLandscapeDir = Path.Combine(DataDir, "landscapes");
 
     // Clock
     public ClockPosition Position   { get; set; } = ClockPosition.BottomRight;
@@ -42,7 +44,9 @@ public class Settings
     public PreviewCondition PreviewCondition { get; set; } = PreviewCondition.Auto;
 
     // Picture
+    public PictureSource PictureSource { get; set; } = PictureSource.MyPicture;
     public string    PicturePath       { get; set; } = "";
+    public string    LandscapeFolder   { get; set; } = DefaultLandscapeDir;
     public PictureFit PictureFit       { get; set; } = PictureFit.Cover;
     public int       PictureBrightness { get; set; } = 50;
 

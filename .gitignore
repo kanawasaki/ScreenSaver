@@ -16,3 +16,6 @@ desktop.ini
 *.tmp
 *.bak
 test-output/
+
+## User's own landscape pictures (not for the public repo)
+landscapes/

@@ -45,7 +45,28 @@ static class Program
 
         if (mode == "/render" && args.Length >= 3)
         {
-            RenderFrame(args[1], args[2]);
+            string? sceneTimeArg = args.Length >= 4 ? args[3] : null;
+            string? seasonArg    = args.Length >= 5 ? args[4] : null;
+            RenderFrame(args[1], args[2], sceneTimeArg, seasonArg);
+            return;
+        }
+
+        // Headless test hook for the background cross-fade, independent of the matching logic:
+        //   ClockScreensaver.scr /testfade <settingsA.json> <settingsB.json> <outDir>
+        if (mode == "/testfade" && args.Length >= 4)
+        {
+            TestFade(args[1], args[2], args[3]);
+            return;
+        }
+
+        // Headless test hook for the landscape-matching algorithm, independent of rendering.
+        // Writes results to a file rather than stdout — this is a WinExe with no attached
+        // console, so Console output is silently swallowed when run from a terminal.
+        //   ClockScreensaver.scr /testpick <folder> <weather> <time> <season> <outFile> [count]
+        if (mode == "/testpick" && args.Length >= 6)
+        {
+            int count = args.Length >= 7 && int.TryParse(args[6], out var c) ? c : 10;
+            TestPick(args[1], args[2], args[3], args[4], args[5], count);
             return;
         }
 
@@ -102,8 +123,11 @@ static class Program
     }
 
     // Headless single-frame renderer for automated verification:
-    //   ClockScreensaver.scr /render <settings.json> <out.png>
-    static void RenderFrame(string settingsPath, string outPath)
+    //   ClockScreensaver.scr /render <settings.json> <out.png> [sceneTime] [season]
+    // sceneTime/season are test-only overrides (Day|Night|Dawn|Dusk, Spring|Summer|Autumn|Winter)
+    // so landscape-matching fallback tiers can be exercised deterministically, independent of
+    // the real wall-clock time and date.
+    static void RenderFrame(string settingsPath, string outPath, string? sceneTimeArg = null, string? seasonArg = null)
     {
         if (!File.Exists(settingsPath))
         {
@@ -136,8 +160,13 @@ static class Program
             FetchedAt = DateTime.Now,
         };
 
+        SceneTime sceneTime = Enum.TryParse<SceneTime>(sceneTimeArg, true, out var stOverride)
+            ? stOverride : weather.GetSceneTime(settings.TimeOfDay);
+        Season season = Enum.TryParse<Season>(seasonArg, true, out var seasonOverride)
+            ? seasonOverride : SeasonCalc.GetSeason(DateTime.Now, 0f);
+
         fx.Build(W, H, settings.EffectsOn ? cond : null, isNight, settings.EffectsStrength / 100f,
-            settings.Position, settings, 2.0);
+            settings.Position, settings, 2.0, sceneTime, season);
 
         using var bmp = new Bitmap(W, H);
         using (var g = Graphics.FromImage(bmp))
@@ -146,7 +175,7 @@ static class Program
             g.Clear(Color.Black);
             fx.Draw(g, 2.0, 0.033f, W, H, false);
             float opacity = settings.Brightness / 100f;
-            ClockRenderer.Draw(g, settings, settings.WeatherOn ? weather : null, new Rectangle(0, 0, W, H), opacity);
+            ClockRenderer.Draw(g, settings, settings.WeatherOn ? weather : null, new Rectangle(0, 0, W, H), opacity, fx.HasBackground);
         }
 
         var fullOut = Path.GetFullPath(outPath);
@@ -154,6 +183,70 @@ static class Program
         bmp.Save(fullOut, System.Drawing.Imaging.ImageFormat.Png);
         Logger.Log($"/render: settings={settingsPath} → {fullOut}");
         Console.WriteLine($"Rendered {fullOut}");
+    }
+
+    // Drives EffectsRenderer directly (no window) to confirm the ~3s cross-fade blends two
+    // backgrounds rather than hard-cutting between them.
+    static void TestFade(string settingsAPath, string settingsBPath, string outDir)
+    {
+        var sa = Settings.LoadFrom(settingsAPath);
+        var sb = Settings.LoadFrom(settingsBPath);
+        const int W = 640, H = 360;
+        using var fx = new EffectsRenderer();
+        var fullOutDir = Path.GetFullPath(outDir);
+        Directory.CreateDirectory(fullOutDir);
+
+        fx.Build(W, H, null, false, 0f, sa.Position, sa, 0.0, SceneTime.Day, Season.Spring);
+        SaveFxFrame(fx, 0.0, W, H, Path.Combine(fullOutDir, "frame_a_initial.png"));
+
+        const double fadeStartT = 10.0;
+        fx.Build(W, H, null, false, 0f, sb.Position, sb, fadeStartT, SceneTime.Day, Season.Spring);
+
+        foreach (var dt in new[] { 0.0, 0.75, 1.5, 2.25, 3.0, 4.0 })
+            SaveFxFrame(fx, fadeStartT + dt, W, H, Path.Combine(fullOutDir, $"frame_b_t{dt:0.00}.png"));
+
+        Logger.Log($"/testfade: wrote frames to {fullOutDir}");
+    }
+
+    static void SaveFxFrame(EffectsRenderer fx, double t, int w, int h, string path)
+    {
+        using var bmp = new Bitmap(w, h);
+        using (var g = Graphics.FromImage(bmp))
+        {
+            g.Clear(Color.Black);
+            fx.Draw(g, t, 0.033f, w, h, false);
+        }
+        bmp.Save(path, System.Drawing.Imaging.ImageFormat.Png);
+    }
+
+    static void TestPick(string folder, string weatherArg, string timeArg, string seasonArg, string outFile, int count)
+    {
+        var lines = new List<string>();
+        if (!Enum.TryParse<WeatherCondition>(weatherArg, true, out var weather))
+            lines.Add($"ERROR: bad weather \"{weatherArg}\"");
+        if (!Enum.TryParse<SceneTime>(timeArg, true, out var time))
+            lines.Add($"ERROR: bad time \"{timeArg}\"");
+        if (!Enum.TryParse<Season>(seasonArg, true, out var season))
+            lines.Add($"ERROR: bad season \"{seasonArg}\"");
+
+        if (lines.Count == 0)
+        {
+            var lib = new LandscapeLibrary();
+            var scan = lib.EnsureScanned(folder);
+            lines.Add($"Scanned \"{folder}\": {scan.Pictures.Count} picture(s), {scan.IgnoredFiles.Count} ignored");
+            lines.Add(LandscapeSummary.Describe(scan));
+
+            var rng = new Random();
+            for (int i = 0; i < count; i++)
+            {
+                var pick = lib.Pick(weather, time, season, rng);
+                lines.Add(pick != null ? Path.GetFileName(pick.Path) : "(none)");
+            }
+        }
+
+        var fullOut = Path.GetFullPath(outFile);
+        Directory.CreateDirectory(Path.GetDirectoryName(fullOut)!);
+        File.WriteAllLines(fullOut, lines);
     }
 
     static void ScreenshotSettings(string? outDirOverride)

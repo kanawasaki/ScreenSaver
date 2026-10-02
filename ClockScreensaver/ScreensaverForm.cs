@@ -17,6 +17,7 @@ public class ScreensaverForm : Form
     private System.Windows.Forms.Timer _fxTimer = new();
     private System.Windows.Forms.Timer _rotateTimer = new();
     private System.Windows.Forms.Timer _parentMonitor = new();
+    private System.Windows.Forms.Timer _landscapeTimer = new();
 
     private Point _mouseOrigin;
     private bool _started = false;
@@ -107,6 +108,15 @@ public class ScreensaverForm : Form
 
         _fxTimer.Start();
 
+        // Scene time (dawn/dusk/day/night) can change independently of weather polling —
+        // re-evaluate the matched landscape picture periodically without disturbing particles.
+        if (settings.PictureSource == PictureSource.MatchingLandscape && !isPreview)
+        {
+            _landscapeTimer.Interval = 60 * 1000;
+            _landscapeTimer.Tick += (_, _) => RefreshLandscapeBackground();
+            _landscapeTimer.Start();
+        }
+
         if (weather != null && isPrimary)
             weather.Start();
 
@@ -163,10 +173,8 @@ public class ScreensaverForm : Form
         }
     }
 
-    private void RebuildScene(bool force)
+    private (WeatherCondition? cond, bool isNight) ComputeConditions()
     {
-        if (Width <= 0 || Height <= 0) return;
-
         WeatherCondition? cond = null;
         bool isNight = false;
 
@@ -198,11 +206,41 @@ public class ScreensaverForm : Form
                 cond = WeatherCondition.Clear;
         }
 
-        Logger.Log($"RebuildScene: cond={cond}, isNight={isNight}, effects={_settings.EffectsOn}, previewCond={_settings.PreviewCondition}");
+        return (cond, isNight);
+    }
+
+    // Picture matching uses its own finer-grained time-of-day (dawn/dusk) and season,
+    // computed independently of whether ambient effects are enabled.
+    private (SceneTime time, Season season) ComputeSceneContext()
+    {
+        var time = _weather?.Current?.GetSceneTime(_settings.TimeOfDay) ?? DefaultSceneTime(_settings.TimeOfDay);
+        float lat = _weather?.Current?.Latitude ?? 0f;
+        var season = SeasonCalc.GetSeason(DateTime.Now, lat);
+        return (time, season);
+    }
+
+    private void RebuildScene(bool force)
+    {
+        if (Width <= 0 || Height <= 0) return;
+
+        var (cond, isNight) = ComputeConditions();
+        var (sceneTime, season) = ComputeSceneContext();
+
+        Logger.Log($"RebuildScene: cond={cond}, isNight={isNight}, sceneTime={sceneTime}, season={season}, effects={_settings.EffectsOn}, previewCond={_settings.PreviewCondition}");
         float strength = _settings.EffectsStrength / 100f;
-        _fx.Build(Width, Height, cond, isNight, strength, _settings.Position, _settings, _tSec);
+        _fx.Build(Width, Height, cond, isNight, strength, _settings.Position, _settings, _tSec, sceneTime, season);
         _buffer = null; // force redraw
         Invalidate();
+    }
+
+    // Re-evaluates just the matched landscape picture (e.g. a dawn/dusk window elapsing)
+    // without resetting particle positions the way a full RebuildScene would.
+    private void RefreshLandscapeBackground()
+    {
+        if (Width <= 0 || Height <= 0) return;
+        var (cond, isNight) = ComputeConditions();
+        var (sceneTime, season) = ComputeSceneContext();
+        _fx.RebuildBackground(_settings, Width, Height, cond, isNight, sceneTime, season, _tSec);
     }
 
     private static bool DefaultIsNight(TimeOfDay tod)
@@ -211,6 +249,14 @@ public class ScreensaverForm : Form
         if (tod == TimeOfDay.Night) return true;
         int h = DateTime.Now.Hour;
         return h >= 20 || h < 6;
+    }
+
+    private static SceneTime DefaultSceneTime(TimeOfDay tod)
+    {
+        if (tod == TimeOfDay.Day) return SceneTime.Day;
+        if (tod == TimeOfDay.Night) return SceneTime.Night;
+        int h = DateTime.Now.Hour;
+        return (h >= 20 || h < 6) ? SceneTime.Night : SceneTime.Day;
     }
 
     private static bool _loggedFirstPaint = false;
@@ -246,7 +292,7 @@ public class ScreensaverForm : Form
                 float opacity = (_settings.Brightness / 100f)
                     * (_settings.EffectsOn && isNight ? 0.75f : 1f)
                     * _clockOpacity;
-                ClockRenderer.Draw(g, _settings, _weather?.Current, new Rectangle(0, 0, w, h), opacity);
+                ClockRenderer.Draw(g, _settings, _weather?.Current, new Rectangle(0, 0, w, h), opacity, _fx.HasBackground);
             }
         }
 
@@ -290,7 +336,7 @@ public class ScreensaverForm : Form
         if (disposing)
         {
             _fxTimer.Dispose(); _rotateTimer.Dispose();
-            _parentMonitor.Dispose();
+            _parentMonitor.Dispose(); _landscapeTimer.Dispose();
             _fx.Dispose(); _buffer?.Dispose();
         }
         base.Dispose(disposing);

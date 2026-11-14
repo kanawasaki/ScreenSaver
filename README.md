@@ -85,6 +85,14 @@ Rename-Item publish\ClockScreensaver.exe ClockScreensaver.scr
 Every push and pull request is built on GitHub Actions; the build is attached to the run as an artifact.
 Pushing a tag like `v0.3.0` (or **Actions → Build & Release → Run workflow**) creates a release.
 
+To download and install the newest GitHub build in one step (needs the [GitHub CLI](https://cli.github.com/)):
+
+```powershell
+.\tools\try-build.ps1                  # newest build of master
+.\tools\try-build.ps1 -Pr 3            # newest build of pull request 3
+.\tools\try-build.ps1 -Release v0.3.0  # a published release
+```
+
 Test modes, for checking output without watching the screen:
 
 ```

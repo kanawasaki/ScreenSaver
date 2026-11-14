@@ -6,9 +6,11 @@ namespace ClockScreensaver;
 
 public class WeatherService : IDisposable
 {
-    private static readonly string CacheDir =
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "ClockScreensaver");
-    private static readonly string CacheFile = Path.Combine(CacheDir, "weather.json");
+    // Kept with the settings and log in %LOCALAPPDATA%\ClockScreensaver. Older builds wrote
+    // it to %APPDATA% (Roaming); that file is still read once as a fallback.
+    private static readonly string CacheFile = Path.Combine(Settings.DataDir, "weather.json");
+    private static readonly string OldCacheFile = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "ClockScreensaver", "weather.json");
 
     private readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(15) };
     private volatile WeatherResult? _cached;
@@ -172,8 +174,9 @@ public class WeatherService : IDisposable
     {
         try
         {
-            if (!File.Exists(CacheFile)) return null;
-            var json = File.ReadAllText(CacheFile);
+            string file = File.Exists(CacheFile) ? CacheFile : OldCacheFile;
+            if (!File.Exists(file)) return null;
+            var json = File.ReadAllText(file);
             return JsonSerializer.Deserialize<WeatherResult>(json);
         }
         catch { return null; }
@@ -183,7 +186,7 @@ public class WeatherService : IDisposable
     {
         try
         {
-            Directory.CreateDirectory(CacheDir);
+            Directory.CreateDirectory(Settings.DataDir);
             File.WriteAllText(CacheFile, JsonSerializer.Serialize(r));
         }
         catch { }

@@ -132,4 +132,7 @@ public class Settings
     }
 
     public void Save() => TrySave();
+
+    public Settings Clone() =>
+        JsonSerializer.Deserialize<Settings>(JsonSerializer.Serialize(this, _opts), _opts) ?? new Settings();
 }

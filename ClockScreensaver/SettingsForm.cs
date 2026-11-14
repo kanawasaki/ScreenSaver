@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Drawing.Drawing2D;
 
 namespace ClockScreensaver;
@@ -1018,7 +1019,7 @@ public class SettingsForm : Form
     private class PositionPicker : Control
     {
         private ClockPosition _sel = ClockPosition.BottomRight;
-        public ClockPosition Selected { get => _sel; set { _sel = value; Invalidate(); } }
+        [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)] public ClockPosition Selected { get => _sel; set { _sel = value; Invalidate(); } }
         public event Action<ClockPosition>? SelectionChanged;
 
         private static readonly (ClockPosition pos, float rx, float ry)[] Slots =
@@ -1114,8 +1115,9 @@ public class SettingsForm : Form
     {
         private int _min, _max, _val;
         private bool _dragging;
-        public int Minimum { get => _min; set { _min = value; Invalidate(); } }
-        public int Maximum { get => _max; set { _max = value; Invalidate(); } }
+        [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)] public int Minimum { get => _min; set { _min = value; Invalidate(); } }
+        [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)] public int Maximum { get => _max; set { _max = value; Invalidate(); } }
+        [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)] 
         public int Value
         {
             get => _val;
@@ -1283,7 +1285,8 @@ public class SettingsForm : Form
             Season season = SeasonCalc.GetSeason(DateTime.Now, 0f);
 
             _fx.Build(VirtW, VirtH, cond, isNight, _settings.EffectsStrength / 100f,
-                _settings.Position, _settings, _tSec, sceneTime, season);
+                _settings.Position, _settings, _tSec, sceneTime, season,
+                pictureWeather: previewWeather?.Condition);
             _dirty = false;
 
             if (CondLbl != null)

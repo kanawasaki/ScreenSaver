@@ -30,7 +30,9 @@ public class EffectsRenderer : IDisposable
     private bool _lastPicNight;
     private int _lastPicBright;
     private PictureFit _lastPicFit;
+    private bool _lastPicGraded;
     private readonly LandscapeLibrary _landscapes = new();
+    private LandscapePicture? _currentPick; // the matched landscape, or null for "My picture"/none
 
     public bool HasBackground => _filteredBg != null || _prevBg != null;
     public string? CurrentBackgroundPath => _lastPicPath;
@@ -38,7 +40,8 @@ public class EffectsRenderer : IDisposable
 
     public void Build(int width, int height, WeatherCondition? cond, bool isNight, float strength,
                       ClockPosition clockPos, Settings settings, double tSec = 0,
-                      SceneTime sceneTime = SceneTime.Day, Season season = Season.Spring)
+                      SceneTime sceneTime = SceneTime.Day, Season season = Season.Spring,
+                      WeatherCondition? pictureWeather = null)
     {
         _currentCond = cond;
         _isNight = isNight;
@@ -89,7 +92,7 @@ public class EffectsRenderer : IDisposable
         if (cond == WeatherCondition.Storm)
             _nextFlash = tSec + Rnd(6, 14);
 
-        RebuildBackground(settings, width, height, cond, isNight, sceneTime, season, tSec);
+        RebuildBackground(settings, width, height, cond, isNight, sceneTime, season, tSec, pictureWeather);
     }
 
     // Resolves which picture should be showing (landscape match or "My picture"), and
@@ -97,9 +100,10 @@ public class EffectsRenderer : IDisposable
     // Safe to call often — it's a cheap no-op when nothing changed.
     public void RebuildBackground(Settings settings, int width, int height,
                                    WeatherCondition? cond, bool isNight,
-                                   SceneTime sceneTime, Season season, double tSec)
+                                   SceneTime sceneTime, Season season, double tSec,
+                                   WeatherCondition? pictureWeather = null)
     {
-        string? path = ResolvePicturePath(settings, cond, sceneTime, season);
+        var (path, pick) = ResolvePicturePath(settings, pictureWeather ?? cond, sceneTime, season);
 
         if (path == null)
         {
@@ -109,13 +113,21 @@ public class EffectsRenderer : IDisposable
             return;
         }
 
+        // A matched landscape already shows its weather and time of day, so it isn't
+        // colour-graded for the weather again, and a night/dusk/dawn picture isn't darkened
+        // a second time. Night darkening still applies when a day picture has to stand in
+        // at night (a fallback), and "My picture" keeps the full grading as before.
+        WeatherCondition? gradeCond = pick != null ? null : cond;
+        bool darken = isNight && (pick == null || pick.Time is null or SceneTime.Day);
+        bool graded = pick == null;
+
         bool sourceChanged = path != _lastPicPath;
-        bool styleChanged = cond != _lastPicCond || isNight != _lastPicNight
+        bool styleChanged = gradeCond != _lastPicCond || darken != _lastPicNight || graded != _lastPicGraded
             || settings.PictureBrightness != _lastPicBright || settings.PictureFit != _lastPicFit;
 
         if (!sourceChanged && !styleChanged && _filteredBg != null) return;
 
-        _lastPicCond = cond; _lastPicNight = isNight;
+        _lastPicCond = gradeCond; _lastPicNight = darken; _lastPicGraded = graded;
         _lastPicBright = settings.PictureBrightness; _lastPicFit = settings.PictureFit;
 
         try
@@ -125,7 +137,7 @@ public class EffectsRenderer : IDisposable
             using var gr = Graphics.FromImage(bmp);
 
             var attrs = new ImageAttributes();
-            attrs.SetColorMatrix(BuildColorMatrix(cond, isNight, settings.PictureBrightness / 100f));
+            attrs.SetColorMatrix(BuildColorMatrix(gradeCond, darken, settings.PictureBrightness / 100f));
 
             // Scale to cover/contain
             Rectangle dest = settings.PictureFit == PictureFit.Cover
@@ -154,30 +166,35 @@ public class EffectsRenderer : IDisposable
 
     // Tracks the scene the current pick was made for, so repeated calls with an unchanged
     // scene (resize, periodic re-check, etc.) don't re-roll the random choice every time.
-    private (WeatherCondition weather, SceneTime time, Season season)? _lastSceneKey;
+    private (WeatherCondition weather, SceneTime time, Season season, string folder)? _lastSceneKey;
 
     // Rescans the landscape folder when it changes (cheap no-op otherwise).
-    private string? ResolvePicturePath(Settings settings, WeatherCondition? cond, SceneTime sceneTime, Season season)
+    // Returns the picture to show and, for a matched landscape, the match itself.
+    private (string? path, LandscapePicture? pick) ResolvePicturePath(Settings settings, WeatherCondition? weather,
+                                                                     SceneTime sceneTime, Season season)
     {
         if (settings.PictureSource == PictureSource.MatchingLandscape)
         {
             _landscapes.EnsureScanned(settings.LandscapeFolder);
-            var weatherKey = cond ?? WeatherCondition.Clear;
-            var key = (weatherKey, sceneTime, season);
-            if (_lastSceneKey == key) return _lastPicPath;
-
-            _lastSceneKey = key;
-            var pick = _landscapes.Pick(weatherKey, sceneTime, season, _rng);
-            if (pick != null) return pick.Path;
-            // No landscape match — fall back to "My picture", then black.
+            var weatherKey = weather ?? WeatherCondition.Clear;
+            var key = (weatherKey, sceneTime, season, settings.LandscapeFolder ?? "");
+            if (_lastSceneKey != key || (_currentPick != null && !File.Exists(_currentPick.Path)))
+            {
+                _lastSceneKey = key;
+                _currentPick = _landscapes.Pick(weatherKey, sceneTime, season, _rng);
+            }
+            if (_currentPick != null) return (_currentPick.Path, _currentPick);
+            // No landscape match: fall back to "My picture", then black.
         }
         else
         {
             _lastSceneKey = null;
+            _currentPick = null;
         }
 
-        return !string.IsNullOrEmpty(settings.PicturePath) && File.Exists(settings.PicturePath)
+        string? mine = !string.IsNullOrEmpty(settings.PicturePath) && File.Exists(settings.PicturePath)
             ? settings.PicturePath : null;
+        return (mine, null);
     }
 
     private static ColorMatrix BuildColorMatrix(WeatherCondition? cond, bool isNight, float picBright)

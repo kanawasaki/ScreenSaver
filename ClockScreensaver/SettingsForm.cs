@@ -1283,7 +1283,8 @@ public class SettingsForm : Form
             Season season = SeasonCalc.GetSeason(DateTime.Now, 0f);
 
             _fx.Build(VirtW, VirtH, cond, isNight, _settings.EffectsStrength / 100f,
-                _settings.Position, _settings, _tSec, sceneTime, season);
+                _settings.Position, _settings, _tSec, sceneTime, season,
+                pictureWeather: previewWeather?.Condition);
             _dirty = false;
 
             if (CondLbl != null)

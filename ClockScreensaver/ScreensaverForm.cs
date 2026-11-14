@@ -11,12 +11,10 @@ public class ScreensaverForm : Form
     private readonly WeatherService? _weather;
     private readonly bool _isPrimary;
     private readonly bool _isPreview;
-    private IntPtr _previewParentHwnd; // set before CreateHandle
 
     private readonly EffectsRenderer _fx = new();
     private System.Windows.Forms.Timer _fxTimer = new();
     private System.Windows.Forms.Timer _rotateTimer = new();
-    private System.Windows.Forms.Timer _parentMonitor = new();
     private System.Windows.Forms.Timer _landscapeTimer = new();
 
     private Point _mouseOrigin;
@@ -35,28 +33,8 @@ public class ScreensaverForm : Form
     private Bitmap? _buffer;
     private int _bufW, _bufH;
 
-    // CreateParams is called when the window handle is first created.
-    // For preview mode we need WS_CHILD so GDI paints within the parent pane.
-    protected override CreateParams CreateParams
-    {
-        get
-        {
-            var cp = base.CreateParams;
-            if (_isPreview && _previewParentHwnd != IntPtr.Zero)
-            {
-                cp.Style    = 0x56000000; // WS_VISIBLE | WS_CHILD | WS_CLIPSIBLINGS | WS_CLIPCHILDREN
-                cp.ExStyle  = 0;
-                cp.Parent   = _previewParentHwnd;
-                cp.X        = 0;
-                cp.Y        = 0;
-            }
-            return cp;
-        }
-    }
-
     public ScreensaverForm(Settings settings, WeatherService? weather, Screen screen, bool isPrimary, bool isPreview = false)
     {
-        _previewParentHwnd = IntPtr.Zero; // must be set before Show() if preview
         _settings = settings;
         _weather = weather;
         _isPrimary = isPrimary;
@@ -72,14 +50,9 @@ public class ScreensaverForm : Form
         BackColor = Color.Black;
         FormBorderStyle = FormBorderStyle.None;
         ShowInTaskbar = false;
-        // Hide cursor (WinForms has no Cursors.None; override WndProc instead)
-        // OptimizedDoubleBuffer is skipped for the preview: this Form is reparented as a
-        // WS_CHILD of a foreign process's HWND, and the built-in double-buffer surface does
-        // not composite reliably across that process boundary. We already do our own manual
-        // buffering via _buffer below, so it isn't needed anyway.
-        var styles = ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint;
-        if (!isPreview) styles |= ControlStyles.OptimizedDoubleBuffer;
-        SetStyle(styles, true);
+        // Cursor is hidden in WndProc (WinForms has no Cursors.None).
+        // The Windows settings preview is drawn by PreviewWindow, not by this form.
+        SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint | ControlStyles.OptimizedDoubleBuffer, true);
 
         if (!isPreview)
         {
@@ -173,62 +146,18 @@ public class ScreensaverForm : Form
         }
     }
 
-    private (WeatherCondition? cond, bool isNight) ComputeConditions()
-    {
-        WeatherCondition? cond = null;
-        bool isNight = false;
-
-        if (_settings.EffectsOn)
-        {
-            // Determine effective condition
-            WeatherCondition? liveCond = _weather?.Current?.Condition;
-            if (_settings.PreviewCondition != PreviewCondition.Auto)
-            {
-                cond = _settings.PreviewCondition switch
-                {
-                    PreviewCondition.Clear       => WeatherCondition.Clear,
-                    PreviewCondition.PartlyCloudy=> WeatherCondition.PartlyCloudy,
-                    PreviewCondition.Cloudy      => WeatherCondition.Cloudy,
-                    PreviewCondition.Rain        => WeatherCondition.Rain,
-                    PreviewCondition.Snow        => WeatherCondition.Snow,
-                    PreviewCondition.Storm       => WeatherCondition.Storm,
-                    _                            => liveCond,
-                };
-            }
-            else if (_settings.WeatherOn)
-                cond = liveCond;
-
-            isNight = _weather?.Current?.IsNight(_settings.TimeOfDay)
-                      ?? DefaultIsNight(_settings.TimeOfDay);
-
-            // Ambient effects (stars/rays) even when no weather data yet
-            if (cond == null)
-                cond = WeatherCondition.Clear;
-        }
-
-        return (cond, isNight);
-    }
-
-    // Picture matching uses its own finer-grained time-of-day (dawn/dusk) and season,
-    // computed independently of whether ambient effects are enabled.
-    private (SceneTime time, Season season) ComputeSceneContext()
-    {
-        var time = _weather?.Current?.GetSceneTime(_settings.TimeOfDay) ?? DefaultSceneTime(_settings.TimeOfDay);
-        float lat = _weather?.Current?.Latitude ?? 0f;
-        var season = SeasonCalc.GetSeason(DateTime.Now, lat);
-        return (time, season);
-    }
+    private SceneState CurrentScene() => SceneState.Compute(_settings, _weather?.Current);
 
     private void RebuildScene(bool force)
     {
         if (Width <= 0 || Height <= 0) return;
 
-        var (cond, isNight) = ComputeConditions();
-        var (sceneTime, season) = ComputeSceneContext();
-
-        Logger.Log($"RebuildScene: cond={cond}, isNight={isNight}, sceneTime={sceneTime}, season={season}, effects={_settings.EffectsOn}, previewCond={_settings.PreviewCondition}");
+        var sc = CurrentScene();
+        Logger.Log($"RebuildScene: effects={sc.EffectsCondition}, picture={sc.PictureWeather}, isNight={sc.IsNight}, " +
+                   $"sceneTime={sc.Time}, season={sc.Season}, effectsOn={_settings.EffectsOn}, previewCond={_settings.PreviewCondition}");
         float strength = _settings.EffectsStrength / 100f;
-        _fx.Build(Width, Height, cond, isNight, strength, _settings.Position, _settings, _tSec, sceneTime, season);
+        _fx.Build(Width, Height, sc.EffectsCondition, sc.IsNight, strength, _settings.Position, _settings, _tSec,
+                  sc.Time, sc.Season, sc.PictureWeather);
         _buffer = null; // force redraw
         Invalidate();
     }
@@ -238,36 +167,14 @@ public class ScreensaverForm : Form
     private void RefreshLandscapeBackground()
     {
         if (Width <= 0 || Height <= 0) return;
-        var (cond, isNight) = ComputeConditions();
-        var (sceneTime, season) = ComputeSceneContext();
-        _fx.RebuildBackground(_settings, Width, Height, cond, isNight, sceneTime, season, _tSec);
+        var sc = CurrentScene();
+        _fx.RebuildBackground(_settings, Width, Height, sc.EffectsCondition, sc.IsNight, sc.Time, sc.Season, _tSec,
+                              sc.PictureWeather);
     }
 
-    private static bool DefaultIsNight(TimeOfDay tod)
-    {
-        if (tod == TimeOfDay.Day) return false;
-        if (tod == TimeOfDay.Night) return true;
-        int h = DateTime.Now.Hour;
-        return h >= 20 || h < 6;
-    }
-
-    private static SceneTime DefaultSceneTime(TimeOfDay tod)
-    {
-        if (tod == TimeOfDay.Day) return SceneTime.Day;
-        if (tod == TimeOfDay.Night) return SceneTime.Night;
-        int h = DateTime.Now.Hour;
-        return (h >= 20 || h < 6) ? SceneTime.Night : SceneTime.Day;
-    }
-
-    private static bool _loggedFirstPaint = false;
     protected override void OnPaint(PaintEventArgs e)
     {
         int w = Width, h = Height;
-        if (_isPreview && !_loggedFirstPaint)
-        {
-            Logger.Log($"ScreensaverForm.OnPaint (preview): size={w}x{h}, isPrimary={_isPrimary}, handleCreated={IsHandleCreated}");
-            _loggedFirstPaint = true;
-        }
         if (w <= 0 || h <= 0) return;
 
         // Maintain buffer
@@ -283,7 +190,7 @@ public class ScreensaverForm : Form
             g.Clear(Color.Black);
 
             bool isNight = _weather?.Current?.IsNight(_settings.TimeOfDay)
-                           ?? DefaultIsNight(_settings.TimeOfDay);
+                           ?? SceneState.DefaultIsNight(_settings.TimeOfDay);
 
             _fx.Draw(g, _tSec, 0.033f, w, h, _reducedMotion);
 
@@ -312,7 +219,9 @@ public class ScreensaverForm : Form
 
     private void ExitAll()
     {
-        foreach (Form f in Application.OpenForms.Cast<Form>().ToArray())
+        // Only screensaver windows: "Preview full screen" in Settings must not close
+        // the Settings dialog itself when the preview is dismissed.
+        foreach (var f in Application.OpenForms.OfType<ScreensaverForm>().ToArray())
             f.Close();
     }
 
@@ -336,54 +245,9 @@ public class ScreensaverForm : Form
         if (disposing)
         {
             _fxTimer.Dispose(); _rotateTimer.Dispose();
-            _parentMonitor.Dispose(); _landscapeTimer.Dispose();
+            _landscapeTimer.Dispose();
             _fx.Dispose(); _buffer?.Dispose();
         }
         base.Dispose(disposing);
     }
-
-    // Create a child window inside the Windows preview pane.
-    // No weather service — preview should be low-CPU with no network requests.
-    public static ScreensaverForm CreatePreview(IntPtr hwnd, Settings settings)
-    {
-        var rect = new RECT();
-        GetClientRect(hwnd, ref rect);
-        int w = Math.Max(rect.Right - rect.Left, 1);
-        int h = Math.Max(rect.Bottom - rect.Top, 1);
-        Logger.Log($"CreatePreview: parentHwnd={hwnd}, clientRect={w}x{h}");
-
-        var form = new ScreensaverForm(settings, null, Screen.PrimaryScreen!, true, true);
-        // _previewParentHwnd must be set before Show() triggers CreateHandle → CreateParams
-        form._previewParentHwnd = hwnd;
-        form.Size = new Size(w, h);
-
-        // Exit if the parent pane is destroyed (user navigates away in Screen Saver Settings)
-        form._parentMonitor.Interval = 500;
-        form._parentMonitor.Tick += (_, _) =>
-        {
-            if (!IsWindow(hwnd))
-            {
-                Logger.Log("Preview parent closed — exiting");
-                Application.Exit();
-            }
-        };
-        form._parentMonitor.Start();
-
-        form.Show();
-        // The preview HWND is a sibling within a foreign process's monitor-bezel control;
-        // newly created children aren't guaranteed to land on top of existing siblings there,
-        // and if a sibling fully covers our rect we never receive a paintable region at all.
-        BringWindowToTop(form.Handle);
-        form.Invalidate();
-        form.Update();
-        Logger.Log($"Preview form shown, handleCreated={form.IsHandleCreated}, visible={form.Visible}");
-        return form;
-    }
-
-    [DllImport("user32.dll")] private static extern IntPtr SetParent(IntPtr child, IntPtr parent);
-    [DllImport("user32.dll")] private static extern bool GetClientRect(IntPtr hwnd, ref RECT rect);
-    [DllImport("user32.dll")] private static extern bool IsWindow(IntPtr hwnd);
-    [DllImport("user32.dll")] private static extern bool BringWindowToTop(IntPtr hwnd);
-    [StructLayout(LayoutKind.Sequential)]
-    private struct RECT { public int Left, Top, Right, Bottom; }
 }

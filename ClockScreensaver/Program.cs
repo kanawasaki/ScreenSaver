@@ -75,15 +75,12 @@ static class Program
             if (long.TryParse(hwndStr, out long hwndLong) && hwndLong != 0)
             {
                 Logger.Log($"Preview mode: HWND={hwndLong}");
-                var settings = Settings.Load();
-                var form = ScreensaverForm.CreatePreview(new IntPtr(hwndLong), settings);
-                form.FormClosed += (_, _) => Application.Exit();
-                Application.Run();
+                PreviewWindow.Run(new IntPtr(hwndLong), Settings.Load());
             }
             else
             {
-                Logger.Log($"Preview: no valid HWND, falling through to screensaver");
-                RunScreensaver();
+                // Never start the full-screen screensaver from a preview request.
+                Logger.Log("Preview: no valid HWND, nothing to do");
             }
             return;
         }
@@ -165,8 +162,8 @@ static class Program
         Season season = Enum.TryParse<Season>(seasonArg, true, out var seasonOverride)
             ? seasonOverride : SeasonCalc.GetSeason(DateTime.Now, 0f);
 
-        fx.Build(W, H, settings.EffectsOn ? cond : null, isNight, settings.EffectsStrength / 100f,
-            settings.Position, settings, 2.0, sceneTime, season);
+        fx.Build(W, H, settings.EffectsOn ? cond : null, settings.EffectsOn && isNight, settings.EffectsStrength / 100f,
+            settings.Position, settings, 2.0, sceneTime, season, pictureWeather: cond);
 
         using var bmp = new Bitmap(W, H);
         using (var g = Graphics.FromImage(bmp))

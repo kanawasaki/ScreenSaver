@@ -1,17 +1,20 @@
 name: Build & Release
 
+# Every push to master and every pull request is built, and the result is
+# uploaded as a downloadable artifact (Actions run page -> Artifacts).
+# A release is created only for a version tag (v1.2.3) or the manual
+# "Run workflow" button with a version.
+
 on:
   push:
-    tags:
-      - 'v*'
+    branches: [master]
+    tags: ['v*']
+  pull_request:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version tag to create, e.g. v0.2.0-rc2'
+        description: 'Version tag to create, e.g. v0.3.0 or v0.3.0-rc1'
         required: true
-
-env:
-  VERSION: ${{ github.event.inputs.version || github.ref_name }}
 
 permissions:
   contents: write
@@ -22,33 +25,58 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup .NET 8
+      - name: Setup .NET 10
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '8.0.x'
+          dotnet-version: '10.0.x'
 
-      - name: Restore
-        run: dotnet restore ClockScreensaver/ClockScreensaver.csproj
+      - name: Work out version
+        shell: pwsh
+        run: |
+          $tag = "${{ github.event.inputs.version || github.ref_name }}"
+          $isRelease = $tag -match '^v\d+\.\d+\.\d+'
+          if ($isRelease) { $ver = $tag.Substring(1) } else { $ver = "0.0.0-ci.${{ github.run_number }}" }
+          "PKG_VERSION=$ver"   >> $env:GITHUB_ENV
+          "RELEASE_TAG=$tag"   >> $env:GITHUB_ENV
+          "IS_RELEASE=$isRelease" >> $env:GITHUB_ENV
+          Write-Host "Version $ver (release: $isRelease)"
 
-      - name: Publish (single-file, self-contained)
+      - name: Publish (framework-dependent single file)
+        shell: pwsh
         run: |
           dotnet publish ClockScreensaver/ClockScreensaver.csproj `
-            -c Release `
-            -r win-x64 `
-            --self-contained `
-            -p:PublishSingleFile=true `
+            -c Release -r win-x64 --self-contained false `
+            -p:PublishSingleFile=true -p:Version=$env:PKG_VERSION `
             -o publish
 
-      - name: Rename to .scr
-        run: Rename-Item publish\ClockScreensaver.exe ClockScreensaver.scr
+      - name: Package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force package | Out-Null
+          Move-Item publish\ClockScreensaver.exe package\ClockScreensaver.scr
+          Copy-Item install.ps1, uninstall.ps1, README.md package\
+          $hash = (Get-FileHash package\ClockScreensaver.scr -Algorithm SHA256).Hash
+          "$hash  ClockScreensaver.scr" | Out-File package\SHA256.txt -Encoding ascii
+          Get-ChildItem package | Format-Table Name, Length
+          Compress-Archive package\* "ClockScreensaver-$env:PKG_VERSION.zip"
 
-      - name: Create Release
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ClockScreensaver-${{ env.PKG_VERSION }}
+          path: package/
+
+      - name: Create release
+        if: env.IS_RELEASE == 'True'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ env.VERSION }}
+          tag_name: ${{ env.RELEASE_TAG }}
           target_commitish: ${{ github.sha }}
-          files: publish/ClockScreensaver.scr
+          files: |
+            ClockScreensaver-${{ env.PKG_VERSION }}.zip
+            package/ClockScreensaver.scr
+            package/SHA256.txt
           generate_release_notes: true
-          prerelease: ${{ contains(env.VERSION, '-') }}
+          prerelease: ${{ contains(env.RELEASE_TAG, '-') }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

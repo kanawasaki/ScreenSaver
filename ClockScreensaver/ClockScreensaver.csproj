@@ -2,22 +2,46 @@
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net8.0-windows</TargetFramework>
+    <!-- .NET 8 reached end of support on 10 Nov 2026; .NET 10 is the current LTS. -->
+    <TargetFramework>net10.0-windows</TargetFramework>
     <UseWindowsForms>true</UseWindowsForms>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>ClockScreensaver</AssemblyName>
     <RootNamespace>ClockScreensaver</RootNamespace>
-    <ApplicationIcon></ApplicationIcon>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-    <PublishSingleFile>true</PublishSingleFile>
-    <SelfContained>true</SelfContained>
+
+    <!--
+      Framework-dependent single file, NOT self-contained, NOT compressed.
+      The old build was a ~30 MB self-contained, compressed bundle that unpacked native
+      code to %TEMP% at start-up. Unsigned, rarely-seen executables that unpack or
+      decompress themselves are a classic trigger for Microsoft Defender's heuristic
+      ("Wacatac"-style) false positives. This build is a small ordinary .NET executable
+      that runs on the Microsoft-signed .NET Desktop Runtime installed on the PC.
+    -->
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
-    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
-    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
-    <AssemblyVersion>1.0.0.0</AssemblyVersion>
-    <FileVersion>1.0.0.0</FileVersion>
-    <Version>0.2.1</Version>
+    <SelfContained>false</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+    <EnableCompressionInSingleFile>false</EnableCompressionInSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>false</IncludeNativeLibrariesForSelfExtract>
+    <DebugType>embedded</DebugType>
+    <!-- Run on a newer .NET major version if 10 isn't installed. -->
+    <RollForward>Major</RollForward>
+
+    <!--
+      Version: overridden by the release workflow from the git tag (-p:Version=0.3.0).
+      AssemblyVersion and FileVersion are derived from it by the SDK.
+    -->
+    <Version>0.3.0-dev</Version>
+
+    <!-- File properties shown in Explorer; unsigned files with no metadata look more suspicious. -->
+    <Product>Clock Screensaver</Product>
+    <AssemblyTitle>Clock Screensaver</AssemblyTitle>
+    <Description>Clock screensaver with weather and ambient effects</Description>
+    <Company>Dima Kanevsky</Company>
+    <Authors>Dima Kanevsky</Authors>
+    <Copyright>Copyright (c) 2026 Dima Kanevsky. MIT License.</Copyright>
+    <NeutralLanguage>en-US</NeutralLanguage>
   </PropertyGroup>
 
   <ItemGroup>

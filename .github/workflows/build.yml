@@ -34,8 +34,18 @@ jobs:
         shell: pwsh
         run: |
           $tag = "${{ github.event.inputs.version || github.ref_name }}"
-          $isRelease = $tag -match '^v\d+\.\d+\.\d+'
-          if ($isRelease) { $ver = $tag.Substring(1) } else { $ver = "0.0.0-ci.${{ github.run_number }}" }
+          # Release tags: v1.2.3, v1.2, v1.2.3-rc1 or v1.2-rc1 (v1.2 is treated as 1.2.0).
+          $isRelease = $false
+          if ($tag -match '^v(\d+)\.(\d+)(?:\.(\d+))?(-[0-9A-Za-z.-]+)?$') {
+            $isRelease = $true
+            $patch = if ($Matches[3]) { $Matches[3] } else { '0' }
+            $ver = "$($Matches[1]).$($Matches[2]).$patch$($Matches[4])"
+          } else {
+            $ver = "0.0.0-ci.${{ github.run_number }}"
+            if ("${{ github.ref_type }}" -eq 'tag' -or "${{ github.event_name }}" -eq 'workflow_dispatch') {
+              throw "'$tag' is not a release version. Use a tag like v0.3.0 or v0.3.0-rc1."
+            }
+          }
           "PKG_VERSION=$ver"   >> $env:GITHUB_ENV
           "RELEASE_TAG=$tag"   >> $env:GITHUB_ENV
           "IS_RELEASE=$isRelease" >> $env:GITHUB_ENV
